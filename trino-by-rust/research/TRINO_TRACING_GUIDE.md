@@ -3,9 +3,10 @@
 **Instructions for Claude:**
 This is an atomic task list for analyzing the Trino source code. **DO NOT attempt to execute multiple tasks at once.** The user will specify a Task ID (e.g., "Claude, execute Task 1.1.A"). 
 1. Read the specified source files using your CLI tools to understand the implementation.
-2. Analyze the code deeply based on the specific "Focus" provided.
-3. Generate the output exactly matching the `RESEARCH_TEMPLATE.md` structure.
-4. Stop and wait for the user to verify the output and provide the next command.
+2. **"Target Files" are a suggested starting point only** — they are not exhaustive. Automatically expand your research scope to any related dependencies, callers, implementations, or utilities that are relevant to the Focus. Follow the code wherever it leads.
+3. Analyze the code deeply based on the specific "Focus" provided.
+4. Generate the output exactly matching the `RESEARCH_TEMPLATE.md` structure.
+5. Stop and wait for the user to verify the output and provide the next command.
 
 ---
 
