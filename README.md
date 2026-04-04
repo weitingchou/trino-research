@@ -1,11 +1,7 @@
-# Trino Research
+# Data Engine Research
 
-A personal study repository for exploring [Trino](https://trino.io/) — the distributed SQL query engine.
+A personal study repository for exploring data engine internals — distributed SQL query engines, OLAP systems, and dataframe runtimes.
 
-## Topics
+## Engines
 
-- Architecture & internals
-- Query planning and optimization
-- Connectors
-- Performance tuning
-- Deployment and configuration
+- **[Trino](trino/)** — Distributed SQL query engine
