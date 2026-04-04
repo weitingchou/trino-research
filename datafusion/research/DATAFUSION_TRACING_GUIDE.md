@@ -35,21 +35,35 @@ This is an atomic task list for analyzing the Apache DataFusion source code (and
 
 ---
 
-## Phase 2: Worker Scheduling & The Driver (Execution Model)
-**Objective:** Break down the asynchronous, pull-based stream execution model.
+## Phase 2: Worker Scheduling (Execution Model)
+**Objective:** Map the relationship between Execution Plans, Partitions, and Async Streams to understand DataFusion's pull-based execution model.
 
-* **Task 2.1.A: The `ExecutionPlan` Contract**
-  * **Target Crates/Files:** `datafusion-physical-plan/src/lib.rs` (focus on `ExecutionPlan` trait)
-  * **Focus:** Analyze the trait methods, specifically `execute()`, `properties()`, and `children()`. How does a plan describe its partitioning scheme?
-* **Task 2.1.B: The Async Stream Interface**
-  * **Target Crates/Files:** `datafusion-physical-plan/src/stream.rs` (focus on `RecordBatchStream` and `SendableRecordBatchStream`)
-  * **Focus:** How does DataFusion leverage the Rust `Stream` trait? Trace how batches are pulled asynchronously via `poll_next()`.
-* **Task 2.1.C: Task Execution Environment**
-  * **Target Crates/Files:** `datafusion-execution/src/task.rs` (focus on `TaskContext`)
-  * **Focus:** What context is passed into every `execute()` call? Trace how `TaskContext` holds memory pools, configuration, and session IDs.
-* **Task 2.2.A: Partitioning and Tokio Task Spawning**
-  * **Target Crates/Files:** `datafusion-physical-plan/src/lib.rs` (focus on partition handling methods)
-  * **Focus:** How do multiple partitions of an `ExecutionPlan` map to concurrent Tokio tasks? Find the exact mechanism where DataFusion spawns async tasks to process partitions in parallel.
+### 2.1 Plan Partitioning & Task Context
+* **Task 2.1.A: The `ExecutionPlan` & Partitioning**
+  * **Target Crates/Files:** `datafusion-physical-plan/src/lib.rs` (focus on `ExecutionPlan` and `Partitioning`)
+  * **Focus:** How does a physical plan define its level of concurrency? Trace the `output_partitioning()` method to understand how an operator declares how many parallel streams (drivers) it can produce.
+* **Task 2.1.B: `TaskContext` Initialization & Resource Wiring**
+  * **Target Crates/Files:** `datafusion-execution/src/task.rs` (focus on `TaskContext` and `SessionConfig`)
+  * **Focus:** Trace how a `TaskContext` is wired up before execution begins. How does it link the `MemoryPool`, `DiskManager`, and session properties to the execution of a specific partition?
+
+### 2.2 Async Task Spawning
+* **Task 2.2.A: Tokio Task Spawning**
+  * **Target Crates/Files:** `datafusion-physical-plan/src/lib.rs` or operator-specific files like `datafusion-physical-plan/src/repartition/mod.rs`
+  * **Focus:** How are multiple partitions mapped to actual CPU threads? Find the exact mechanisms where DataFusion uses `tokio::spawn` or `tokio::task::spawn_blocking` to hand off work to the async runtime.
+* **Task 2.2.B: Task Cancellation & Failure Propagation**
+  * **Target Crates/Files:** `datafusion-execution/src/task.rs` (focus on `JoinHandle` or cancellation logic)
+  * **Focus:** If one partition fails or the query is aborted, how is the failure propagated? Trace how dropping a Rust `Future` or aborting a Tokio task handles the teardown.
+
+### 2.3 The Stream Lifecycle
+* **Task 2.3.A: Stream Initialization**
+  * **Target Crates/Files:** `datafusion-physical-plan/src/stream.rs` (focus on `RecordBatchStream`)
+  * **Focus:** How is an operator instantiated into an active stream? Trace the `execute(partition: usize, context: Arc<TaskContext>)` method across a core operator (like Filter or Projection).
+* **Task 2.3.B: The Pull-Based Execution Loop (`poll_next`)**
+  * **Target Crates/Files:** `datafusion-physical-plan/src/stream.rs` and `std::task::Poll` implementations
+  * **Focus:** This is the core engine loop. Trace how `poll_next()` is called. Document exactly where the stream hits an `.await` point (yielding control back to the Tokio executor) when waiting for upstream data or disk I/O.
+* **Task 2.3.C: Stream Termination & Cleanup**
+  * **Target Crates/Files:** Implementations of `RecordBatchStream` in specific operators.
+  * **Focus:** When is a stream considered finished? Trace the path when `poll_next()` finally returns `Poll::Ready(None)`, and analyze how `MemoryReservation` drops automatically release memory back to the `TaskContext`.
 
 ---
 
