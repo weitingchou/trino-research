@@ -60,6 +60,13 @@ sequenceDiagram
 * **Allocation Pattern:** [Does this allocate large chunks of off-heap memory? Does it create many small objects?]
 * **Memory Tracking:** [How does this component report its memory usage to the LocalMemoryContext or MemoryPool?]
 
-## 6. Porting Considerations (Java -> Target Architecture)
-* **Translation Blockers:** [Identify heavy reliance on Java-specific features like GC, JNI, or deep inheritance]
-* **Recommended Abstractions:** [Suggest architectural patterns for the Rust rewrite, such as specific traits, Tokio async tasks, or memory allocator wrappers]
+## 6. Key Design Insights
+Summarize the most important findings from this code trace. Each insight must be grounded in specific code evidence — do not speculate or infer beyond what the source code shows.
+
+* **[Insight Title]:** [Description of the design pattern, decision, or finding, with reference to the specific code that demonstrates it.]
+
+## 7. Porting Considerations (Java -> Target Architecture) *(Optional)*
+*Include this section only when the research is for a porting/rewrite project (e.g., Trino → Rust). Omit for studies of engines that are already in the target language.*
+
+* **Translation Blockers:** [Identify heavy reliance on language-specific features like GC, JNI, or deep inheritance]
+* **Recommended Abstractions:** [Suggest architectural patterns for the target architecture, such as specific traits, async tasks, or memory allocator wrappers]
