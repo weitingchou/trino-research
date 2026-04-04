@@ -105,7 +105,7 @@ This is an atomic task list for analyzing the Trino source code. **DO NOT attemp
 
 ---
 
-## Phase 5: Memory Tracking & Arbitration (Resource Limits)
+## Phase 5: Memory Tracking & Arbitration (Memory Management)
 **Objective:** Map out the strict hierarchical memory accounting system to replicate it in Rust.
 
 * **Task 5.1.A: Global Memory Pools**

@@ -1,3 +1,23 @@
+# File Naming Convention
+
+Research files follow this pattern:
+
+```
+{seq}_{engine}_{version}_{phase}.{task}.{subtask}_{component}.md
+```
+
+| Field | Description | Example |
+|---|---|---|
+| `seq` | Zero-padded sequence number for ordering | `01`, `02` |
+| `engine` | Engine name in lowercase | `trino`, `doris`, `datafusion` |
+| `version` | Engine version being studied | `480` |
+| `phase.task.subtask` | Task ID from the tracing guide | `1.1.A`, `2.2.B` |
+| `component` | Snake-cased component name | `slice_memory_wrapper` |
+
+**Example:** `01_trino_480_1.1.A_slice_memory_wrapper.md`
+
+---
+
 # Module Teardown: [Module Name / Component]
 
 ## 1. High-Level Overview
