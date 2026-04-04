@@ -5,8 +5,9 @@ This is an atomic task list for analyzing the Trino source code. **DO NOT attemp
 1. Read the specified source files using your CLI tools to understand the implementation.
 2. **"Target Files" are a suggested starting point only** — they are not exhaustive. Automatically expand your research scope to any related dependencies, callers, implementations, or utilities that are relevant to the Focus. Follow the code wherever it leads.
 3. Analyze the code deeply based on the specific "Focus" provided.
-4. Generate the output exactly matching the `RESEARCH_TEMPLATE.md` structure.
-5. Stop and wait for the user to verify the output and provide the next command.
+4. **Provide code snippets** for key concepts in your explanation. Quote relevant source code directly to support your analysis rather than describing it abstractly.
+5. Generate the output exactly matching the `RESEARCH_TEMPLATE.md` structure.
+6. Stop and wait for the user to verify the output and provide the next command.
 
 ---
 
