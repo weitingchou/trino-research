@@ -70,10 +70,10 @@ This is an atomic task list for analyzing the Trino source code. **DO NOT attemp
 
 ---
 
-# Phase 3: Operator Internals and Data Processing (Physical Plan Execution)
+## Phase 3: Operator Internals and Data Processing (Physical Plan Execution)
 **Objective:** Trace the physical data processing nodes to understand Trino's columnar, streaming, Volcano-style execution engine. This phase ignores scheduling and focuses purely on how data is transformed in memory.
 
-## Task 3.1: The Operator Engine Fundamentals
+### Task 3.1: The Operator Engine Fundamentals
 Before looking at specific operations, we need to understand the contract every Operator must follow to allow cooperative multitasking.
 
 * **Task 3.1.A: The Operator State Machine**
@@ -83,21 +83,21 @@ Before looking at specific operations, we need to understand the contract every 
     * **Target Files:** `io.trino.operator.OperatorContext`
     * **Focus:** How does an individual Operator track its CPU time, wall time, and memory allocations? How do these localized metrics bubble up to the `DriverContext`?
 
-## Task 3.2: The Data Payload (Pages & Blocks)
+### Task 3.2: The Data Payload (Pages & Blocks)
 Operators don't process rows; they process columnar batches. Understanding these data structures is mandatory for tracing Operator logic.
 
 * **Task 3.2.A: The Columnar Memory Model**
     * **Target Files:** `io.trino.spi.Page`, `io.trino.spi.block.Block`
     * **Focus:** How is a `Page` structured? Trace how a `Block` represents a single column of data in memory (e.g., `DictionaryBlock`, `RunLengthEncodedBlock`, `VariableWidthBlock`). How do Operators read from these structures without copying data?
 
-## Task 3.3: Stateless & Linear Pipelines
+### Task 3.3: Stateless & Linear Pipelines
 Tracing the simplest data flow where one input page directly results in one or more output pages.
 
 * **Task 3.3.A: Simple Projection & Filtering**
     * **Target Files:** `io.trino.operator.ScanFilterAndProjectOperator`, `io.trino.operator.project.PageProcessor`
     * **Focus:** Trace a raw block of data coming from a connector, passing through a filter, and yielding a transformed `Page`. How does Trino compile these expressions into bytecode for faster execution?
 
-## Task 3.4: Stateful & Complex Pipelines
+### Task 3.4: Stateful & Complex Pipelines
 Tracing operations that must hold state across multiple `addInput()` calls, and operations that bridge multiple Pipelines.
 
 * **Task 3.4.A: Hash Join - The Build Pipeline**
@@ -110,7 +110,7 @@ Tracing operations that must hold state across multiple `addInput()` calls, and 
     * **Target Files:** `io.trino.operator.aggregation.AggregationOperator`, `io.trino.operator.aggregation.Accumulator`
     * **Focus:** Trace a Group-By operation. How does the operator maintain state across multiple `addInput()` calls? Differentiate between partial (local) aggregations and final (global) aggregations.
 
-## Task 3.5: Resilience and Memory Management
+### Task 3.5: Resilience and Memory Management
 What happens when a single Operator demands more memory than the worker can provide?
 
 * **Task 3.5.A: The Disk Spilling Mechanism**
