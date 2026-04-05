@@ -2,204 +2,238 @@
 
 ## Mind Map
 
+Modules are shown as `[rectangles]`, classes as `(rounded boxes)`.
+
 ```mermaid
 mindmap
   root((Trino Worker))
-    HTTP API Layer
-      TaskResource
-      StatusResource
-      MemoryResource
-    Task Management
-      SqlTaskManager
-      SqlTask
-      SqlTaskExecution
-      TaskStateMachine
-    Plan Compilation
-      LocalExecutionPlanner
-      DriverFactory
-      ExpressionCompiler
-      PageFunctionCompiler
-      ColumnarFilterCompiler
-    Scheduling Engine
-      TimeSharingTaskExecutor
-      MultilevelSplitQueue
-      PrioritizedSplitRunner
-      DriverYieldSignal
-    Execution Engine
-      Driver
-      Operator Contract
-      WorkProcessorOperator
-      54 Concrete Operators
-    Data Model
-      Slice
-      Block sealed hierarchy
-      Page
-      BlockBuilder / PageBuilder
-    Data Exchange
-      OutputBuffer
-      PagesSerde
-      DirectExchangeClient
-      HttpPageBufferClient
-    Connector SPI
-      ConnectorPageSource
-      ConnectorPageSink
-      ConnectorSplit
-      DynamicFilter
-    Memory Management
-      MemoryPool
-      QueryContext
-      MemoryTrackingContext Tree
-      MemoryRevokingScheduler
-      Spiller
-    Plugin System
-      PluginManager
-      ConnectorManager
-      TypeRegistry
+    [HTTP API Layer]
+      (TaskResource)
+      (StatusResource)
+      (MemoryResource)
+    [Task Management]
+      (SqlTaskManager)
+      (SqlTask)
+      (SqlTaskExecution)
+      (TaskStateMachine)
+    [Plan Compilation]
+      (LocalExecutionPlanner)
+      (DriverFactory)
+      (ExpressionCompiler)
+      (PageProcessor)
+    [Scheduling Engine]
+      (TimeSharingTaskExecutor)
+      (MultilevelSplitQueue)
+      (PrioritizedSplitRunner)
+      (DriverYieldSignal)
+    [Execution Engine]
+      (Driver)
+      (Operator)
+      (WorkProcessorOperator)
+      (OperatorContext)
+    [Data Model]
+      (Slice)
+      (Block)
+      (Page)
+      (BlockBuilder)
+    [Data Exchange]
+      (OutputBuffer)
+      (PagesSerde)
+      (DirectExchangeClient)
+      (HttpPageBufferClient)
+    [Connector SPI]
+      (ConnectorPageSource)
+      (ConnectorPageSink)
+      (ConnectorSplit)
+      (DynamicFilter)
+    [Memory Management]
+      (MemoryPool)
+      (QueryContext)
+      (MemoryTrackingContext)
+      (MemoryRevokingScheduler)
+      (Spiller)
+    [Plugin System]
+      (PluginManager)
+      (ConnectorManager)
+      (TypeRegistry)
 ```
 
 ---
 
 ## Detailed Module Breakdown
 
-### 1. HTTP API Layer
-The worker's external surface. All coordinator communication enters here.
+Base path: `trino-by-rust/trino/`
+- `core/trino-main/src/main/java/io/trino/` → abbreviated as `c.t.`
+- `core/trino-spi/src/main/java/io/trino/spi/` → abbreviated as `spi.`
+- `lib/trino-memory-context/src/main/java/io/trino/memory/context/` → abbreviated as `lib.mem.`
+- `io.airlift.slice` → external airlift library (v2.3)
 
-| Class | Role |
-|-------|------|
-| `TaskResource` | REST endpoints: `POST /v1/task/{taskId}` (create/update), `GET /v1/task/{taskId}/results/{bufferId}/{token}` (data pull), `DELETE /v1/task/{taskId}` (abort) |
-| `StatusResource` | `GET /v1/task/{taskId}/status` — long-polling with version-based change detection |
-| `MemoryResource` | `GET /v1/memory` — returns `MemoryInfo` snapshot for coordinator aggregation |
-| `ThreadResource` | `GET /v1/thread` — thread dump for diagnostics |
+### 1. HTTP API Layer
+The worker's external surface. All coordinator communication enters here via JAX-RS REST endpoints.
+
+| Class | Path | Role |
+|-------|------|------|
+| `TaskResource` | `c.t.server.TaskResource` | `POST /v1/task/{taskId}` (create/update), `GET .../results/{bufferId}/{token}` (data pull), `DELETE /v1/task/{taskId}` (abort) |
+| `StatusResource` | `c.t.server.TaskResource` (same class, separate endpoints) | `GET /v1/task/{taskId}/status` — long-polling with version-based change detection |
+| `MemoryResource` | `c.t.server.MemoryResource` | `GET /v1/memory` — returns `MemoryInfo` snapshot for coordinator aggregation |
+| `ThreadResource` | `c.t.server.ThreadResource` | `GET /v1/thread` — thread dump for diagnostics |
+| `ServerConfig` | `c.t.server.ServerConfig` | Determines if this node is coordinator, worker, or both |
 
 ### 2. Task Management
 Lifecycle of tasks on the worker. Bridges REST requests to the execution engine.
 
-| Class | Role |
-|-------|------|
-| `SqlTaskManager` | Task registry. Creates/caches `SqlTask` and `QueryContext` instances. Entry point for `updateTask()` from REST. |
-| `SqlTask` | Wrapper for a single task. Holds `TaskHolder` (three-phase union: initial → running → result), `LazyOutputBuffer`, `TaskStateMachine`. |
-| `SqlTaskExecution` | The active execution. Compiles plan fragment via `LocalExecutionPlanner`, creates `DriverFactory` instances, routes splits to drivers, manages pipeline lifecycle. |
-| `TaskStateMachine` | 10 states: `PLANNED → RUNNING → FLUSHING → FINISHED` (happy path), with `FAILING/FAILED`, `CANCELING/CANCELED`, `ABORTING/ABORTED` for error paths. Two-phase termination ensures all drivers close before terminal state. |
-| `TaskHolder` | Three-phase union type: initially holds the `TaskExecution` factory inputs, transitions to holding the live `SqlTaskExecution`, finally holds only the terminal `TaskInfo` result. |
+| Class | Path | Role |
+|-------|------|------|
+| `SqlTaskManager` | `c.t.execution.SqlTaskManager` | Task registry. Creates/caches `SqlTask` and `QueryContext` instances. Entry point for `updateTask()` from REST. |
+| `SqlTask` | `c.t.execution.SqlTask` | Wrapper for a single task. Holds `TaskHolder`, `LazyOutputBuffer`, `TaskStateMachine`. |
+| `TaskHolder` | `c.t.execution.SqlTask.TaskHolder` | Inner class. Three-phase union: factory inputs → live `SqlTaskExecution` → terminal `TaskInfo`. |
+| `SqlTaskExecution` | `c.t.execution.SqlTaskExecution` | Compiles plan via `LocalExecutionPlanner`, creates `DriverFactory` instances, routes splits to drivers. |
+| `TaskStateMachine` | `c.t.execution.TaskStateMachine` | 10 states with two-phase termination. `PLANNED → RUNNING → FLUSHING → FINISHED` (happy path). |
+| `TaskContext` | `c.t.operator.TaskContext` | Per-task resource context. Creates `PipelineContext` children. Bridges to `QueryContext` for memory. |
+| `TaskUpdateRequest` | `c.t.server.TaskUpdateRequest` | JSON DTO: carries plan fragment, splits, output buffers, and dynamic filter domains from coordinator. |
 
 ### 3. Plan Compilation
-Translates a plan fragment (from the coordinator) into executable operator pipelines. This is the glue between the distributed plan and the local execution engine.
+Translates a plan fragment into executable operator pipelines. Glue between the distributed plan and local execution.
 
-| Class | Role |
-|-------|------|
-| `LocalExecutionPlanner` | Walks the `PlanNode` tree and produces a `LocalExecutionPlan` containing `DriverFactory` instances. Each plan node maps to one or more `OperatorFactory`. Handles partitioning, exchange layout, and pipeline boundaries (e.g., hash join splits into build + probe pipelines). |
-| `LocalExecutionPlan` | The compiled result: a list of `DriverFactory` objects plus partition-to-driver mapping. |
-| `DriverFactory` | Blueprint for creating `Driver` instances. Holds a list of `OperatorFactory` in pipeline order. Creates drivers on demand (one per split for source pipelines, fixed count for task-lifecycle pipelines). |
-| `ExpressionCompiler` | Orchestrates bytecode generation for filter and projection expressions. |
-| `PageFunctionCompiler` | Generates JVM bytecode for `PageProjection` and `PageFilter` using the airlift bytecode library. Row-at-a-time evaluation path. |
-| `ColumnarFilterCompiler` | Generates specialized columnar filter evaluators that process entire columns at once. Used when the filter expression is simple enough for columnar evaluation. |
-| `PageProcessor` | The compiled artifact: holds a filter + list of projections. Applied by `ScanFilterAndProjectOperator` with adaptive batch sizing and yield support. |
+| Class | Path | Role |
+|-------|------|------|
+| `LocalExecutionPlanner` | `c.t.sql.planner.LocalExecutionPlanner` | Walks `PlanNode` tree → `LocalExecutionPlan` (list of `DriverFactory`). Each plan node maps to `OperatorFactory`(s). Handles pipeline boundary splits (e.g., hash join → build + probe). |
+| `LocalExecutionPlan` | `c.t.sql.planner.LocalExecutionPlanner.LocalExecutionPlan` | Compiled result: `DriverFactory[]` + partition-to-driver mapping. |
+| `DriverFactory` | `c.t.operator.DriverFactory` | Blueprint for `Driver` creation. Holds `OperatorFactory` list in pipeline order. Creates drivers on demand. |
+| `OperatorFactory` | `c.t.operator.OperatorFactory` | Interface: `createOperator(DriverContext)` → `Operator`. One factory per plan node per pipeline. |
+| `ExpressionCompiler` | `c.t.sql.gen.ExpressionCompiler` | Orchestrates bytecode generation for filter/projection expressions. |
+| `PageFunctionCompiler` | `c.t.sql.gen.PageFunctionCompiler` | Generates JVM bytecode for `PageProjection` and `PageFilter` via airlift bytecode library. Row-at-a-time path. |
+| `ColumnarFilterCompiler` | `c.t.sql.gen.columnar.ColumnarFilterCompiler` | Generates columnar filter evaluators that process entire columns at once. |
+| `PageProcessor` | `c.t.operator.project.PageProcessor` | Compiled artifact: filter + projection list. Applied by `ScanFilterAndProjectOperator` with adaptive batching and yield. |
 
 ### 4. Scheduling Engine
-Manages the thread pool and decides which driver runs next.
+Manages the fixed-size thread pool and decides which driver runs next.
 
-| Class | Role |
-|-------|------|
-| `TimeSharingTaskExecutor` | The main thread pool (`2 × CPU cores` runner threads). Pulls highest-priority `PrioritizedSplitRunner` from the queue, calls `driver.processFor(1s)`, then re-enqueues, parks, or cleans up based on result. |
-| `MultilevelSplitQueue` | 5-level feedback queue (0–1s, 1–10s, 10–60s, 1–5min, 5min+). Selects the level with the worst actual-to-target time ratio. Level 0 gets 16× the CPU share of Level 4. |
-| `PrioritizedSplitRunner` | Wraps a `DriverSplitRunner` with scheduling metadata: accumulated CPU time, priority level, creation timestamp. |
-| `DriverSplitRunner` | Bridges `Driver.processFor()` to the executor. Handles lazy driver creation (driver instantiated on first `processFor()` call, not at enqueue time). |
-| `SplitConcurrencyController` | Dynamically adjusts how many concurrent drivers a pipeline spawns based on throughput measurements. |
-| `DriverYieldSignal` | A shared flag that operators cooperatively check during long-running operations (e.g., mid-projection, mid-hash-probe). Set by the executor when the 1-second quantum expires. |
+| Class | Path | Role |
+|-------|------|------|
+| `TimeSharingTaskExecutor` | `c.t.execution.executor.timesharing.TimeSharingTaskExecutor` | Main thread pool (`2 × CPU cores`). Pulls highest-priority split from queue, calls `driver.processFor(1s)`, re-enqueues/parks/cleans up. |
+| `MultilevelSplitQueue` | `c.t.execution.executor.timesharing.MultilevelSplitQueue` | 5-level feedback queue (0–1s, 1–10s, 10–60s, 1–5min, 5min+). Level 0 gets 16× CPU share of Level 4. |
+| `PrioritizedSplitRunner` | `c.t.execution.executor.timesharing.PrioritizedSplitRunner` | Wraps `DriverSplitRunner` with scheduling metadata: accumulated CPU time, priority level, timestamp. |
+| `DriverSplitRunner` | `c.t.execution.SqlTaskExecution.DriverSplitRunner` | Inner class. Bridges `Driver.processFor()` to executor. Lazy driver creation on first call. |
+| `SplitConcurrencyController` | `c.t.execution.executor.timesharing.SplitConcurrencyController` | Dynamically adjusts concurrent driver count per pipeline based on throughput. |
+| `DriverYieldSignal` | `c.t.operator.DriverYieldSignal` | Shared flag. Set by executor when quantum expires. Operators cooperatively check during long operations. |
+| `TaskHandle` | `c.t.execution.executor.timesharing.TaskHandle` | Per-task metadata in the executor: tracks all split runners, concurrency limits, resource group. |
 
 ### 5. Execution Engine
 The actual computation. Drivers shuttle Pages through Operator chains.
 
-| Class | Role |
-|-------|------|
-| `Driver` | The execution unit. Single-threaded cooperative yield loop (`processInternal()`): moves Pages between adjacent operators, checks blocked futures, respects yield signal. Never blocks a thread. |
-| `DriverContext` | Per-driver stats and memory tracking. Parent of `OperatorContext` instances. |
-| `Operator` (interface) | Non-blocking Volcano contract: `needsInput()`, `addInput(Page)`, `getOutput()`, `isFinished()`, `isBlocked()`. |
-| `SourceOperator` | Sub-interface for operators at the start of a pipeline (no `addInput()`). Receives splits via `addSplit()`. |
-| `WorkProcessorOperator` | Alternative pull-based pattern. Internally a lazy `WorkProcessor<Page>` stream. `WorkProcessorOperatorAdapter` bridges it to the push-pull `Operator` interface. |
-| **54 concrete operators** | See Task 3.1.C catalog. 10 categories: source, exchange, transform, filter/project, join (build+probe), aggregation, window/ranking, sort/topN, DML/output, metadata/control. Only 4 support spilling: `HashAggregationOperator`, `OrderByOperator`, `WindowOperator`, `spilling.HashBuilderOperator`. |
+| Class | Path | Role |
+|-------|------|------|
+| `Driver` | `c.t.operator.Driver` | Execution unit. Single-threaded cooperative yield loop (`processInternal()`). Moves Pages between operators, checks blocked futures, respects yield signal. Never blocks a thread. |
+| `DriverContext` | `c.t.operator.DriverContext` | Per-driver stats and memory tracking. Parent of `OperatorContext` instances. |
+| `PipelineContext` | `c.t.operator.PipelineContext` | Per-pipeline context. Creates `DriverContext` children. Aggregates stats. |
+| `Operator` | `c.t.operator.Operator` | Interface. Non-blocking Volcano contract: `needsInput()`, `addInput(Page)`, `getOutput()`, `isFinished()`, `isBlocked()`. |
+| `SourceOperator` | `c.t.operator.SourceOperator` | Sub-interface for pipeline-start operators. No `addInput()`. Receives splits via `addSplit()`. |
+| `WorkProcessorOperator` | `c.t.operator.WorkProcessorOperator` | Pull-based alternative. Internal `WorkProcessor<Page>` stream. |
+| `WorkProcessorOperatorAdapter` | `c.t.operator.WorkProcessorOperatorAdapter` | Bridges `WorkProcessorOperator` to the push-pull `Operator` interface for the Driver. |
+| `OperatorContext` | `c.t.operator.OperatorContext` | Per-operator resource tracking: CPU time, wall time, memory (user + revocable), peak tracking, revocation flag. |
+| **54 concrete operators** | `c.t.operator.*` | See Task 3.1.C catalog. 10 categories. Only 4 support spilling: `HashAggregationOperator`, `OrderByOperator`, `WindowOperator`, `spilling.HashBuilderOperator`. |
 
 ### 6. Data Model
 In-memory columnar representation. Passive data — no compute logic.
 
-| Class | Role |
-|-------|------|
-| `Slice` | Byte substrate (airlift v2.3). Bounded view over heap `byte[]` with typed little-endian access via VarHandle. Zero-copy `slice()` shares backing array. |
-| `Block` (sealed) | Column data. Three permitted types: `ValueBlock` (11 concrete: `LongArrayBlock`, `VariableWidthBlock`, etc.), `DictionaryBlock` (index indirection), `RunLengthEncodedBlock` (single value × N). |
-| `Page` | Passive envelope: `Block[] blocks` + `int positionCount`. Zero-copy transforms: `getColumns()`, `prependColumn()`, `getRegion()`, `getPositions()`. |
-| `BlockBuilder` | Mutable append-only builder. `build()` freezes into immutable `Block`. Auto-compresses all-null blocks to RLE. |
-| `PageBuilder` | Page-level builder wrapping multiple `BlockBuilder` instances. Tracks accumulated size via `PageBuilderStatus` (1MB page limit). |
+| Class | Path | Role |
+|-------|------|------|
+| `Slice` | `io.airlift.slice.Slice` | Byte substrate. Bounded view over heap `byte[]` with typed little-endian access via VarHandle. Zero-copy `slice()`. |
+| `Slices` | `io.airlift.slice.Slices` | Factory: `allocate()`, `wrappedBuffer()`, `ensureSize()` (growth: 2× below 512KB, 1.25× above). |
+| `Block` | `spi.block.Block` | Sealed interface. Three permitted: `ValueBlock`, `DictionaryBlock`, `RunLengthEncodedBlock`. |
+| `ValueBlock` | `spi.block.ValueBlock` | Non-sealed sub-interface. 11 concrete implementations (one per physical type). |
+| `LongArrayBlock` | `spi.block.LongArrayBlock` | BIGINT/TIMESTAMP. Fields: `long[] values`, `boolean[] valueIsNull`, `int arrayOffset`. |
+| `VariableWidthBlock` | `spi.block.VariableWidthBlock` | VARCHAR/VARBINARY. Fields: `Slice slice`, `int[] offsets`, `boolean[] valueIsNull`, `int arrayOffset`. |
+| `DictionaryBlock` | `spi.block.DictionaryBlock` | Index indirection: `int[] ids` → `ValueBlock dictionary`. Zero-copy projection. |
+| `RunLengthEncodedBlock` | `spi.block.RunLengthEncodedBlock` | Single `ValueBlock value` × `int positionCount`. Constant memory. |
+| `Page` | `spi.Page` | Passive envelope: `Block[] blocks` + `int positionCount`. Zero-copy transforms: `getColumns()`, `prependColumn()`, `getRegion()`. |
+| `BlockBuilder` | `spi.block.BlockBuilder` | Interface. Mutable append-only builder. `build()` freezes into immutable `Block`. |
+| `PageBuilder` | `spi.PageBuilder` | Page-level builder. Wraps `BlockBuilder[]`. Tracks size via `PageBuilderStatus` (1MB limit). |
+| `PageBuilderStatus` | `spi.block.PageBuilderStatus` | Back-pressure: `isFull()` triggers page emit when accumulated size exceeds 1MB. |
 
 ### 7. Data Exchange
 Inter-worker shuffle and result delivery.
 
-| Class | Role |
-|-------|------|
-| **Producer side** | |
-| `OutputBuffer` (interface) | Buffer for outgoing pages. Implementations: `PartitionedOutputBuffer` (hash-partitioned, per-partition `ClientBuffer`), `BroadcastOutputBuffer` (replicate to all consumers), `ArbitraryOutputBuffer` (round-robin). |
-| `LazyOutputBuffer` | Proxy that defers real buffer creation until `OutputBuffers` config arrives from coordinator. |
-| `ClientBuffer` | Per-consumer FIFO queue with sequence-token-based acknowledgment. Supports long-polling via `SettableFuture`. |
-| `OutputBufferMemoryManager` | Back-pressure: blocks drivers via `SettableFuture` when buffer exceeds memory limit. |
-| `PagesSerde` | Serialization pipeline: 12-byte header + per-block LZ4/ZSTD compression + optional AES-CBC encryption. |
-| `PartitionedOutputOperator` | Operator that hashes rows via `PagePartitioner` and enqueues serialized slices into partition-specific buffers. |
-| `TaskOutputOperator` | Operator for unpartitioned output (broadcast/arbitrary). |
-| **Consumer side** | |
-| `ExchangeOperator` | Source operator that polls `ExchangeDataSource` for serialized pages and deserializes them. |
-| `DirectExchangeClient` | Manages N `HttpPageBufferClient` instances (one per upstream task). Tracks buffer capacity, dispatches HTTP GETs when `remainingCapacity > 0`. |
-| `HttpPageBufferClient` | Per-upstream HTTP client. Token-based idempotent protocol with eager acknowledgment and exponential backoff retry. |
-| `StreamingDirectExchangeBuffer` | In-memory FIFO queue of received serialized pages with capacity-based back-pressure. |
+| Class | Path | Role |
+|-------|------|------|
+| **Producer side** | | |
+| `OutputBuffer` | `c.t.execution.buffer.OutputBuffer` | Interface for outgoing page buffers. |
+| `PartitionedOutputBuffer` | `c.t.execution.buffer.PartitionedOutputBuffer` | Hash-partitioned buffer. Per-partition `ClientBuffer`. |
+| `BroadcastOutputBuffer` | `c.t.execution.buffer.BroadcastOutputBuffer` | Replicates every page to all consumers. |
+| `ArbitraryOutputBuffer` | `c.t.execution.buffer.ArbitraryOutputBuffer` | Round-robin via `MasterBuffer`. |
+| `LazyOutputBuffer` | `c.t.execution.buffer.LazyOutputBuffer` | Proxy. Defers real buffer creation until `OutputBuffers` config arrives. |
+| `ClientBuffer` | `c.t.execution.buffer.ClientBuffer` | Per-consumer FIFO. Sequence-token-based acknowledgment. Long-polling via `SettableFuture`. |
+| `OutputBufferMemoryManager` | `c.t.execution.buffer.OutputBufferMemoryManager` | Back-pressure: blocks drivers via `SettableFuture` when buffer exceeds memory limit. |
+| `CompressingEncryptingPageSerializer` | `c.t.execution.buffer.CompressingEncryptingPageSerializer` | Serialization: 12-byte header + per-block LZ4/ZSTD + optional AES-CBC. |
+| `PagesSerdeFactory` | `c.t.execution.buffer.PagesSerdeFactory` | Creates serializer/deserializer with compression codec and encryption key. |
+| `PartitionedOutputOperator` | `c.t.operator.output.PartitionedOutputOperator` | Operator: hashes rows via `PagePartitioner`, enqueues into partition buffers. |
+| `TaskOutputOperator` | `c.t.operator.output.TaskOutputOperator` | Operator: unpartitioned output (broadcast/arbitrary). |
+| **Consumer side** | | |
+| `ExchangeOperator` | `c.t.operator.exchange.ExchangeOperator` | Source operator. Polls `ExchangeDataSource` for serialized pages, deserializes. |
+| `DirectExchangeClient` | `c.t.operator.DirectExchangeClient` | Manages N `HttpPageBufferClient` instances. Capacity-based dispatch. |
+| `HttpPageBufferClient` | `c.t.operator.HttpPageBufferClient` | Per-upstream HTTP client. Token-based idempotent protocol, eager ack, exponential backoff. |
+| `StreamingDirectExchangeBuffer` | `c.t.operator.StreamingDirectExchangeBuffer` | In-memory FIFO of received serialized pages with capacity-based back-pressure. |
 
 ### 8. Connector Interface (Storage SPI)
 The boundary between the engine and external data sources/sinks.
 
-| Class | Role |
-|-------|------|
-| **Read path** | |
-| `ConnectorPageSource` | SPI interface: `getNextSourcePage()`, `isFinished()`, `isBlocked()`. One instance per split. |
-| `ConnectorPageSourceProvider` | SPI factory: `createPageSource(split, table, columns, dynamicFilter)`. |
-| `PageSourceManager` | Engine-side bridge: routes `CatalogHandle` to the correct `ConnectorPageSourceProvider`. |
-| `SourcePage` | Wrapper returned by page sources. Supports lazy block loading (columns decoded on access). |
-| `DynamicFilter` | Runtime predicate that narrows over query lifetime. Three application points: `ConnectorTableHandle` (planning), `PageProcessor` (engine-side), `DynamicFilter` object (connector-side). |
-| **Write path** | |
-| `ConnectorPageSink` | SPI interface: `appendPage()`, `finish()` → opaque fragment `Slice`s, `abort()`. |
-| `ConnectorPageSinkProvider` | SPI factory for creating sinks (CTAS, INSERT, MERGE). |
-| `PageSinkManager` | Engine-side bridge: routes to correct connector. |
-| `TableWriterOperator` | Pushes pages into `ConnectorPageSink`. On finish, emits fragment descriptors as output page. |
-| `TableFinishOperator` | Coordinator-side: collects all fragments, calls `ConnectorMetadata.finishCreateTable()`/`finishInsert()` for atomic commit. |
-| **Common** | |
-| `ConnectorSplit` | Opaque handle representing a unit of work (file, byte range, partition shard). |
+| Class | Path | Role |
+|-------|------|------|
+| **Read path** | | |
+| `ConnectorPageSource` | `spi.connector.ConnectorPageSource` | SPI interface: `getNextSourcePage()`, `isFinished()`, `isBlocked()`. One per split. |
+| `ConnectorPageSourceProvider` | `spi.connector.ConnectorPageSourceProvider` | SPI factory: `createPageSource(split, table, columns, dynamicFilter)`. |
+| `SourcePage` | `spi.connector.SourcePage` | Wrapper returned by page sources. Supports lazy block loading. |
+| `PageSourceManager` | `c.t.split.PageSourceManager` | Engine-side bridge: routes `CatalogHandle` → `ConnectorPageSourceProvider`. |
+| `DynamicFilter` | `spi.connector.DynamicFilter` | Runtime predicate narrowing over query lifetime. Passed to connector at source creation. |
+| `DynamicFilterService` | `c.t.server.DynamicFilterService` | Coordinator-side: aggregates filter domains from build-side workers, distributes to scan-side. |
+| `LocalDynamicFilterConsumer` | `c.t.sql.planner.LocalDynamicFilterConsumer` | Task-local: delivers domain directly via in-memory futures (intra-stage, no REST). |
+| **Write path** | | |
+| `ConnectorPageSink` | `spi.connector.ConnectorPageSink` | SPI interface: `appendPage()`, `finish()` → fragment `Slice`s, `abort()`. |
+| `ConnectorPageSinkProvider` | `spi.connector.ConnectorPageSinkProvider` | SPI factory: creates sinks for CTAS, INSERT, MERGE. |
+| `PageSinkManager` | `c.t.split.PageSinkManager` | Engine-side bridge: routes to correct connector. |
+| `TableWriterOperator` | `c.t.operator.TableWriterOperator` | Pushes pages into `ConnectorPageSink`. On finish, emits fragment descriptors. |
+| `TableFinishOperator` | `c.t.operator.TableFinishOperator` | Coordinator-side: collects fragments, calls `finishCreateTable()`/`finishInsert()` for atomic commit. |
+| **Common** | | |
+| `ConnectorSplit` | `spi.connector.ConnectorSplit` | Opaque handle: file, byte range, partition shard. |
+| `ConnectorTableHandle` | `spi.connector.ConnectorTableHandle` | Carries pushed-down predicates from planning. |
+| `ConnectorMetadata` | `spi.connector.ConnectorMetadata` | Metadata SPI: table listing, column info, begin/finish write transactions. |
 
 ### 9. Memory Management
 Hierarchical tracking, flow control, spilling, and cluster-level arbitration.
 
-| Class | Role |
-|-------|------|
-| **Pool** | |
-| `MemoryPool` | Single per-node pool. `ConcurrentHashMap` tracking per-query reservations. Returns `NonCancellableMemoryFuture` when exhausted. |
-| `LocalMemoryManager` | Creates the single pool at startup. Size = JVM max heap − 30% headroom. |
-| **Tracking tree** | |
-| `QueryContext` | Per-query isolation. Enforces `maxUserMemory` per node. Creates `MemoryTrackingContext` sub-trees for each task. |
-| `MemoryTrackingContext` | Composite wrapper holding user + revocable `AggregatedMemoryContext` pairs. Factory for child contexts at each hierarchy level. |
-| `RootAggregatedMemoryContext` | Tree root. Bridges to `MemoryPool` via `MemoryReservationHandler`. |
-| `ChildAggregatedMemoryContext` | Intermediate tree node. Delegates delta to parent first, then records locally. |
-| `SimpleLocalMemoryContext` | Leaf node. `setBytes()`/`addBytes()` compute delta and propagate up with allocation tag. |
-| `CoarseGrainLocalMemoryContext` | Decorator: batches allocations to 64KB granularity (~1000× fewer pool interactions). |
-| **Spilling** | |
-| `MemoryRevokingScheduler` | Monitors pool (90% threshold). Traverses task tree, calls `requestMemoryRevoking()` on operators with revocable memory. Dual trigger: 1s timer + pool listener. |
-| `Spiller` / `GenericSpiller` | Multi-stream spill interface. Creates one `SingleStreamSpiller` per spill call. |
-| `FileSingleStreamSpiller` | Writes serialized pages to temp files with optional LZ4/ZSTD compression and AES encryption. |
-| `SpillSpaceTracker` | Global per-node spill disk quota. |
+| Class | Path | Role |
+|-------|------|------|
+| **Pool** | | |
+| `MemoryPool` | `c.t.memory.MemoryPool` | Single per-node. `ConcurrentHashMap` per-query tracking. Returns `NonCancellableMemoryFuture` when exhausted. |
+| `LocalMemoryManager` | `c.t.memory.LocalMemoryManager` | Creates pool at startup. Size = JVM max heap − 30% headroom. |
+| `NodeMemoryConfig` | `c.t.memory.NodeMemoryConfig` | Config: `query.max-memory-per-node`, `memory.heap-headroom-per-node`. |
+| **Tracking tree** | | |
+| `QueryContext` | `c.t.memory.QueryContext` | Per-query isolation. Enforces `maxUserMemory`. Creates `MemoryTrackingContext` sub-trees per task. |
+| `MemoryTrackingContext` | `lib.mem.MemoryTrackingContext` | Composite: user + revocable `AggregatedMemoryContext` pairs. Factory for child contexts. |
+| `RootAggregatedMemoryContext` | `lib.mem.RootAggregatedMemoryContext` | Tree root. Bridges to pool via `MemoryReservationHandler`. |
+| `ChildAggregatedMemoryContext` | `lib.mem.ChildAggregatedMemoryContext` | Intermediate node. Delegates delta to parent, then records locally. |
+| `SimpleLocalMemoryContext` | `lib.mem.SimpleLocalMemoryContext` | Leaf node. `setBytes()`/`addBytes()` compute delta, propagate up with allocation tag. |
+| `CoarseGrainLocalMemoryContext` | `lib.mem.CoarseGrainLocalMemoryContext` | Decorator: 64KB batching (~1000× fewer pool interactions). |
+| `MemoryReservationHandler` | `lib.mem.MemoryReservationHandler` | Bridge interface: `reserveMemory(tag, delta)` → `QueryContext.updateUserMemory()`. |
+| **Spilling** | | |
+| `MemoryRevokingScheduler` | `c.t.execution.MemoryRevokingScheduler` | Monitors pool (90% threshold). Traverses task tree, requests revocation on operators. Dual trigger: 1s timer + pool listener. |
+| `VoidTraversingQueryContextVisitor` | `c.t.memory.VoidTraversingQueryContextVisitor` | Visitor that walks Task → Pipeline → Driver → Operator for revocation traversal. |
+| `Spiller` | `c.t.spiller.Spiller` | Interface: multi-stream spill. |
+| `GenericSpiller` | `c.t.spiller.GenericSpiller` | Creates one `SingleStreamSpiller` per spill call. |
+| `FileSingleStreamSpiller` | `c.t.spiller.FileSingleStreamSpiller` | Writes serialized pages to temp files. Optional LZ4/ZSTD + AES encryption. |
+| `SpillSpaceTracker` | `c.t.spiller.SpillSpaceTracker` | Global per-node spill disk quota. |
 
 ### 10. Plugin System
-Extensibility: loading connectors, types, and functions.
+Extensibility: loading connectors, types, and functions at startup.
 
-| Class | Role |
-|-------|------|
-| `PluginManager` | Discovers and loads SPI plugins via `ServiceLoader` with custom classloaders. |
-| `ConnectorManager` | Manages connector lifecycle: create, configure, shutdown. |
-| `CatalogManager` | Manages catalog registry (static + dynamic catalogs). |
-| `TypeRegistry` | Type system: maps type signatures to `Type` implementations, resolves type operators, connects types to `BlockEncoding`. |
-| `FunctionManager` | Function resolution and binding for built-in and plugin-provided functions. |
+| Class | Path | Role |
+|-------|------|------|
+| `PluginManager` | `c.t.server.PluginManager` | Discovers/loads SPI plugins via `ServiceLoader` with isolated classloaders. |
+| `ConnectorManager` | `c.t.connector.ConnectorManager` | Manages connector lifecycle: create, configure, shutdown. |
+| `CatalogManager` | `c.t.metadata.CatalogManager` | Interface. Catalog registry (static + dynamic catalogs). |
+| `TypeRegistry` | `c.t.metadata.TypeRegistry` | Maps type signatures → `Type` implementations. Resolves type operators and `BlockEncoding`. |
+| `FunctionManager` | `c.t.metadata.FunctionManager` | Function resolution and binding for built-in and plugin-provided functions. |
 
 ---
 
@@ -213,44 +247,44 @@ Extensibility: loading connectors, types, and functions.
                           └──────────┬──────────────────────────────────┬───────────────┘
                                      │ REST/JSON                        │
                           ┌──────────▼──────────────────────────────────▼───────────────┐
-                          │                     HTTP API LAYER                          │
+                          │                  [HTTP API Layer]                           │
                           │  TaskResource    StatusResource    MemoryResource            │
                           └──────────┬──────────────────────────────────────────────────┘
                                      │
                           ┌──────────▼──────────────────────────────────────────────────┐
-                          │                   TASK MANAGEMENT                           │
+                          │                [Task Management]                            │
                           │  SqlTaskManager → SqlTask → SqlTaskExecution                │
                           │                              │                              │
                           │                    TaskStateMachine                         │
                           └──────────┬───────────────────┼──────────────────────────────┘
                                      │                   │ plan fragment
                           ┌──────────▼───────┐ ┌────────▼──────────────────────────────┐
-                          │   SPLIT ROUTING  │ │        PLAN COMPILATION               │
+                          │   SPLIT ROUTING  │ │       [Plan Compilation]              │
                           │  addSplits() →   │ │  LocalExecutionPlanner                │
                           │  schedule to     │ │  PlanNode → DriverFactory[]           │
                           │  correct driver  │ │  ExpressionCompiler → PageProcessor   │
                           └──────────┬───────┘ └────────┬──────────────────────────────┘
                                      │                   │ DriverFactory[]
                           ┌──────────▼───────────────────▼──────────────────────────────┐
-                          │                  SCHEDULING ENGINE                           │
+                          │               [Scheduling Engine]                            │
                           │  TimeSharingTaskExecutor (2×CPU runner threads)              │
                           │  MultilevelSplitQueue (5 priority levels)                   │
                           │  PrioritizedSplitRunner → driver.processFor(1s)             │
                           └──────────┬──────────────────────────────────────────────────┘
                                      │ 1-second quanta
                           ┌──────────▼──────────────────────────────────────────────────┐
-                          │                  EXECUTION ENGINE                            │
+                          │               [Execution Engine]                             │
                           │  Driver (cooperative yield loop)                             │
                           │  ┌──────────┐   ┌──────────┐   ┌──────────┐                │
                           │  │ Source   │──▶│Transform │──▶│  Sink    │                │
                           │  │ Operator │   │ Operator │   │ Operator │                │
                           │  └────┬─────┘   └──────────┘   └────┬─────┘                │
                           │       │              ▲               │                      │
-                          │       │          Page (Block[])      │                      │
+                          │       │        Page (Block[])        │                      │
                           └───────┼──────────────────────────────┼──────────────────────┘
                                   │                              │
                     ┌─────────────▼────────┐          ┌─────────▼─────────────┐
-                    │   CONNECTOR SPI      │          │    DATA EXCHANGE      │
+                    │   [Connector SPI]    │          │   [Data Exchange]     │
                     │  ConnectorPageSource  │          │  OutputBuffer         │
                     │  ConnectorPageSink    │          │  PagesSerde           │
                     │  DynamicFilter        │          │  DirectExchangeClient │
@@ -264,13 +298,13 @@ Extensibility: loading connectors, types, and functions.
 
   CROSS-CUTTING:
   ┌─────────────────────────────────────────────────────────────────────────┐
-  │  MEMORY MANAGEMENT                                                     │
+  │  [Memory Management]                                                   │
   │  MemoryPool ← QueryContext ← TaskCtx ← PipelineCtx ← DriverCtx ←    │
   │  OperatorCtx.setBytes() → block/yield/exception                       │
   │  MemoryRevokingScheduler → Operator.startMemoryRevoke() → Spiller     │
   └─────────────────────────────────────────────────────────────────────────┘
   ┌─────────────────────────────────────────────────────────────────────────┐
-  │  DATA MODEL (passive, used everywhere)                                 │
+  │  [Data Model] (passive, used everywhere)                               │
   │  Slice → Block (ValueBlock | DictionaryBlock | RLE) → Page            │
   └─────────────────────────────────────────────────────────────────────────┘
 ```
