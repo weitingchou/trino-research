@@ -82,6 +82,9 @@ Before looking at specific operations, we need to understand the contract every 
 * **Task 3.1.B: Operator Resource Context**
     * **Target Files:** `io.trino.operator.OperatorContext`
     * **Focus:** How does an individual Operator track its CPU time, wall time, and memory allocations? How do these localized metrics bubble up to the `DriverContext`?
+* **Task 3.1.C: The Complete Operator Catalog**
+    * **Target Files:** `io.trino.operator.*Operator.java`, `io.trino.operator.*OperatorFactory` (all ~43 Operator implementations in `io.trino.operator/` and sub-packages)
+    * **Focus:** Enumerate every `Operator` implementation in Trino 480. For each operator, classify it along these dimensions: (1) **Category** — source, sink, transform, join, aggregation, window, exchange, metadata, or DML; (2) **Pipeline role** — does it start a pipeline (source), end a pipeline (sink), or sit in the middle (transform)? (3) **State model** — stateless (streaming, one page in / one page out), stateful-blocking (accumulates all input before producing output), or stateful-streaming (maintains state but can produce output incrementally)? (4) **Spill support** — does this operator implement `startMemoryRevoke()`/`finishMemoryRevoke()`? (5) **Brief function** — one-sentence description of what the operator does. The output should be a comprehensive reference table covering every operator, grouped by category.
 
 ### Task 3.2: The Data Payload (Pages & Blocks)
 Operators don't process rows; they process columnar batches. Understanding these data structures is mandatory for tracing Operator logic.
