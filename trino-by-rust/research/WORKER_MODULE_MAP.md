@@ -2,60 +2,60 @@
 
 ## Mind Map
 
-Modules are shown as `[rectangles]`, classes as `(rounded boxes)`.
+Modules are plain text, classes are wrapped in `[brackets]`.
 
 ```mermaid
 mindmap
   root((Trino Worker))
-    [HTTP API Layer]
-      (TaskResource)
-      (StatusResource)
-      (MemoryResource)
-    [Task Management]
-      (SqlTaskManager)
-      (SqlTask)
-      (SqlTaskExecution)
-      (TaskStateMachine)
-    [Plan Compilation]
-      (LocalExecutionPlanner)
-      (DriverFactory)
-      (ExpressionCompiler)
-      (PageProcessor)
-    [Scheduling Engine]
-      (TimeSharingTaskExecutor)
-      (MultilevelSplitQueue)
-      (PrioritizedSplitRunner)
-      (DriverYieldSignal)
-    [Execution Engine]
-      (Driver)
-      (Operator)
-      (WorkProcessorOperator)
-      (OperatorContext)
-    [Data Model]
-      (Slice)
-      (Block)
-      (Page)
-      (BlockBuilder)
-    [Data Exchange]
-      (OutputBuffer)
-      (PagesSerde)
-      (DirectExchangeClient)
-      (HttpPageBufferClient)
-    [Connector SPI]
-      (ConnectorPageSource)
-      (ConnectorPageSink)
-      (ConnectorSplit)
-      (DynamicFilter)
-    [Memory Management]
-      (MemoryPool)
-      (QueryContext)
-      (MemoryTrackingContext)
-      (MemoryRevokingScheduler)
-      (Spiller)
-    [Plugin System]
-      (PluginManager)
-      (ConnectorManager)
-      (TypeRegistry)
+    HTTP API Layer
+      ([TaskResource])
+      ([StatusResource])
+      ([MemoryResource])
+    Task Management
+      ([SqlTaskManager])
+      ([SqlTask])
+      ([SqlTaskExecution])
+      ([TaskStateMachine])
+    Plan Compilation
+      ([LocalExecutionPlanner])
+      ([DriverFactory])
+      ([ExpressionCompiler])
+      ([PageProcessor])
+    Scheduling Engine
+      ([TimeSharingTaskExecutor])
+      ([MultilevelSplitQueue])
+      ([PrioritizedSplitRunner])
+      ([DriverYieldSignal])
+    Execution Engine
+      ([Driver])
+      ([Operator])
+      ([WorkProcessorOperator])
+      ([OperatorContext])
+    Data Model
+      ([Slice])
+      ([Block])
+      ([Page])
+      ([BlockBuilder])
+    Data Exchange
+      ([OutputBuffer])
+      ([PagesSerde])
+      ([DirectExchangeClient])
+      ([HttpPageBufferClient])
+    Connector SPI
+      ([ConnectorPageSource])
+      ([ConnectorPageSink])
+      ([ConnectorSplit])
+      ([DynamicFilter])
+    Memory Management
+      ([MemoryPool])
+      ([QueryContext])
+      ([MemoryTrackingContext])
+      ([MemoryRevokingScheduler])
+      ([Spiller])
+    Plugin System
+      ([PluginManager])
+      ([ConnectorManager])
+      ([TypeRegistry])
 ```
 
 ---
