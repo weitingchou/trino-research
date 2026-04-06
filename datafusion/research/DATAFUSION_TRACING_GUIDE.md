@@ -139,17 +139,24 @@ This is an atomic task list for analyzing the Apache DataFusion source code (and
 ---
 
 ## Phase 5: Memory Tracking & Arbitration (Memory Management)
-**Objective:** Map out the strict memory accounting system used to prevent out-of-memory errors.
+**Objective:** Map out the RAII-based memory accounting system. Understand how memory pools arbitrate resources, how operators interact with reservations, and how spilling is triggered synchronously.
 
-* **Task 5.1.A: The `MemoryPool` Trait**
-  * **Target Crates/Files:** `datafusion-execution/src/memory_pool/mod.rs`
-  * **Focus:** Analyze the core `MemoryPool` trait. How are `grow()` and `shrink()` methods defined to track global JVM/process memory?
-* **Task 5.1.B: Pool Implementations**
-  * **Target Crates/Files:** `datafusion-execution/src/memory_pool/pool.rs`
-  * **Focus:** Compare `GreedyMemoryPool` (first-come, first-served) and `FairSpillPool` (ensuring even distribution among tasks).
-* **Task 5.2.A: The `MemoryReservation` Lifecycle**
-  * **Target Crates/Files:** `datafusion-execution/src/memory_pool/mod.rs` (focus on `MemoryReservation` struct)
-  * **Focus:** Trace the RAII pattern here. How does a `MemoryReservation` guarantee that memory is accurately reported and freed when an operator is dropped?
-* **Task 5.2.B: Memory Consumers**
-  * **Target Crates/Files:** `datafusion-execution/src/memory_pool/mod.rs` (focus on `MemoryConsumer`)
-  * **Focus:** How does a specific operator register itself as a consumer? Trace the mechanism an operator uses to request an allocation size.
+### The MemoryPool
+* **Task 5.1: The `MemoryPool` Trait and Implementations**
+  * **Target Crates/Files:** `datafusion-execution` (`src/memory_pool/mod.rs`, `src/memory_pool/pool.rs`)
+  * **Focus:** Analyze the `MemoryPool` trait. Trace the implementations of `GreedyMemoryPool` and `FairSpillPool`. How does `FairSpillPool` track per-consumer usage to ensure even distribution? Compare this to Trino's unified global pool.
+
+### The RAII Reservation
+* **Task 5.2: The RAII Memory Reservation Lifecycle**
+  * **Target Crates/Files:** `datafusion-execution` (`src/memory_pool/mod.rs` — focus on the `MemoryReservation` struct)
+  * **Focus:** Trace the creation of a `MemoryReservation`. Look closely at its `Drop` implementation. How does it guarantee that `pool.shrink()` is called when the reservation is destroyed? Contrast this compiler-enforced safety with Trino's `free()` calls.
+
+### Memory Consumers & Spilling
+* **Task 5.3: Memory Consumers & Proactive Spilling**
+  * **Target Crates/Files:** `datafusion-execution` (`src/memory_pool/mod.rs` — focus on `MemoryConsumer`), `datafusion-physical-plan` (`src/sorts/sort.rs` or `src/joins/hash_join.rs`)
+  * **Focus:** Trace how a specific operator (like `ExternalSorter`) registers as a `MemoryConsumer`. Trace the execution path when `reservation.try_grow()` fails. How does this directly trigger the spilling logic (mapped in Phase 3) without requiring a background revoking thread?
+
+### Task Context & Global Limits
+* **Task 5.4: Task Context and Global Limits**
+  * **Target Crates/Files:** `datafusion-execution` (`src/task.rs`), `datafusion-common` (`src/config.rs`)
+  * **Focus:** Trace how the `MemoryPool` is instantiated and attached to the `TaskContext`. How are global memory limits defined in the `SessionConfig` and passed down to the physical execution plan?
