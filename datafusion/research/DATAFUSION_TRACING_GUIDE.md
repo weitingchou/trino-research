@@ -110,21 +110,31 @@ This is an atomic task list for analyzing the Apache DataFusion source code (and
 
 ---
 
-## Phase 4: Network & Data Exchange (Shuffle)
-**Objective:** Understand how DataFusion shuffles data between partitions and threads locally, as well as the mechanisms for over-the-wire exchange.
+## Phase 4: Communication Interfaces & Data Exchange
+**Objective:** Map out the Storage API (`TableProvider`), the internal memory exchange (`RepartitionExec`), and the distributed network protocols (`Arrow Flight` and `Protobuf`) to contrast with Trino's networking architecture.
 
-* **Task 4.1.A: Local Repartitioning (The Exchange)**
-  * **Target Crates/Files:** `datafusion-physical-plan/src/repartition/mod.rs`
-  * **Focus:** How does `RepartitionExec` take `N` input streams and shuffle them into `M` output streams?
-* **Task 4.1.B: MPSC Channel Shuffling**
-  * **Target Crates/Files:** `datafusion-physical-plan/src/repartition/mod.rs` (focus on channel routing)
-  * **Focus:** Trace the use of Tokio MPSC (Multi-Producer, Single-Consumer) channels to move `RecordBatch`es across async task boundaries.
-* **Task 4.1.C: Hash vs Round-Robin Routing**
-  * **Target Crates/Files:** `datafusion-physical-plan/src/common/ipc.rs` or routing logic in `repartition`
-  * **Focus:** Trace the hash calculation for partitioning. How does it ensure specific rows are routed to the correct downstream partition?
-* **Task 4.2.A: Over-The-Wire Encoding (Arrow Flight)**
-  * **Target Crates/Files:** `arrow-flight/src/encode.rs`, `arrow-flight/src/decode.rs`
-  * **Focus:** How are `RecordBatch` streams converted into gRPC FlightData messages for network transfer?
+### The Storage Plane
+* **Task 4.1.A: The Storage Plane — TableProvider Contract**
+  * **Target Crates/Files:** `datafusion-expr` (`src/table_source.rs`), `datafusion-catalog` (`src/table_provider.rs`), `datafusion-core` (`src/datasource/`)
+  * **Focus:** Trace the `TableProvider` trait. How does `scan()` receive projections, filters, and limit hints? How does `supports_filters_pushdown()` negotiate predicate handling (Exact, Inexact, Unsupported)? Trace `DataSink` for write paths (`INSERT`, `CREATE TABLE AS`). Compare `TableProvider` to Trino's `ConnectorPageSource`.
+* **Task 4.1.B: The Storage Plane — Parquet Scan Pipeline**
+  * **Target Crates/Files:** `datafusion-core` (`src/datasource/physical_plan/parquet/`), `parquet` crate (`src/arrow/async_reader/`), `object_store`
+  * **Focus:** Trace the full Parquet scan pipeline inside `ParquetExec`. How does row-group pruning use min/max statistics? How does page index pruning work? How does the row-level `RowFilter` apply pushed-down predicates during decode? Trace `object_store` byte-range fetching and how it integrates with `tokio` for async I/O.
+
+### The Local Data Plane
+* **Task 4.2: The Local Data Plane (Intra-Node Exchange) — Cross-Reference**
+  * **Reference:** See Phase 2, Task 2.4.B (`23_datafusion_48_2.4.B_local_repartitioning.md`)
+  * **Focus:** This topic is fully covered in the Phase 2 research. That file traces `RepartitionExec::execute()`, custom Gate-based channels (`DistributionSender`/`DistributionReceiver`), hash/round-robin routing, backpressure, spill-to-disk, and preserve-order mode. No additional research needed.
+
+### The Network Data Plane
+* **Task 4.3: The Network Data Plane (Arrow Flight)**
+  * **Target Crates/Files:** `arrow-flight` (`src/encode.rs`, `src/decode.rs`), `datafusion-ballista` (optional, for context on `FlightClient`)
+  * **Focus:** Analyze how a `RecordBatch` stream is converted into a stream of `FlightData` protobuf messages via `FlightDataEncoder`. Trace the receiving side (`FlightDataDecoder`) to confirm how the byte payloads are wrapped into `Buffer`s without copying. Contrast the Arrow Flight gRPC streaming model with Trino's custom token-based HTTP chunk pulling.
+
+### The Distributed Control Plane
+* **Task 4.4: The Distributed Control Plane (Plan Serialization)**
+  * **Target Crates/Files:** `datafusion-proto` (`src/physical_plan/mod.rs`, `src/physical_plan/to_proto.rs`)
+  * **Focus:** How does DataFusion serialize a complex Physical Plan (e.g., a HashJoin tree) into a byte array so it can be sent to remote workers? Trace the `AsExecutionPlan` trait. Contrast this Protobuf-based physical plan transmission with Trino's REST/JSON `TaskUpdateRequest`.
 
 ---
 
