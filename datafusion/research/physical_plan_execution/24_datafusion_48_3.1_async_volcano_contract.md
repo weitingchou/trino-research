@@ -1,5 +1,37 @@
 # Module Teardown: The Async Volcano Contract (`Stream`)
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [3.1 The Core Trait Hierarchy](#31-the-core-trait-hierarchy)
+  - [3.2 `RecordBatchStreamAdapter` -- The Universal Adapter](#32-recordbatchstreamadapter-the-universal-adapter)
+  - [3.3 The `poll_next()` Cascade and `ready!` Macro](#33-the-poll_next-cascade-and-ready-macro)
+  - [3.4 Canonical `poll_next` Patterns](#34-canonical-poll_next-patterns)
+  - [Sequence Diagram](#sequence-diagram)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+  - [4.1 Pin Safety and `poll_next_unpin`](#41-pin-safety-and-poll_next_unpin)
+  - [4.2 `ObservedStream` -- Transparent Metrics Wrapping](#42-observedstream-transparent-metrics-wrapping)
+  - [4.3 Cooperative Scheduling (`CooperativeStream`)](#43-cooperative-scheduling-cooperativestream)
+  - [4.4 `RecordBatchReceiverStreamBuilder` -- Multi-Task Fan-In](#44-recordbatchreceiverstreambuilder-multi-task-fan-in)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+  - [5.1 `ReservationStream` -- Tracking Batch Memory](#51-reservationstream-tracking-batch-memory)
+  - [5.2 `BatchSplitStream` -- Controlling Batch Granularity](#52-batchsplitstream-controlling-batch-granularity)
+  - [5.3 Stream Layering Stack (Typical Query)](#53-stream-layering-stack-typical-query)
+  - [5.4 Error and Cancellation Semantics](#54-error-and-cancellation-semantics)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Insight 1: The `Stream` Trait Collapses Trino's Four-Method Operator Interface Into One](#insight-1-the-stream-trait-collapses-trinos-four-method-operator-interface-into-one)
+  - [Insight 2: `ready!` Is the Async Equivalent of Trino's `isBlocked()` Check](#insight-2-ready-is-the-async-equivalent-of-trinos-isblocked-check)
+  - [Insight 3: `RecordBatchStreamAdapter` Is the Glue That Makes Composable Stream Pipelines Possible](#insight-3-recordbatchstreamadapter-is-the-glue-that-makes-composable-stream-pipelines-possible)
+  - [Insight 4: The `ObservedStream` / `record_poll()` Pattern Provides Zero-Overhead-When-Pending Observability](#insight-4-the-observedstream-record_poll-pattern-provides-zero-overhead-when-pending-observability)
+  - [Insight 5: State Machine Enums Replace Trino's Operator Lifecycle Methods](#insight-5-state-machine-enums-replace-trinos-operator-lifecycle-methods)
+  - [Insight 6: Cooperative Scheduling Is a Bolt-On Layer, Not Fundamental to the Contract](#insight-6-cooperative-scheduling-is-a-bolt-on-layer-not-fundamental-to-the-contract)
+  - [Insight 7: Cancellation Is Implicit via Drop Semantics](#insight-7-cancellation-is-implicit-via-drop-semantics)
+
+
 ## 0. Research Focus
 * **Task ID:** 3.1
 * **Focus:** Analyze the `RecordBatchStream` trait. How does it extend Rust's `Stream`? Trace how the `poll_next()` macro `ready!` is used to bubble up `Poll::Pending` states asynchronously. Document the exact mechanical differences between Trino's explicit `addInput/getOutput` and DataFusion's implicit `poll_next()`.

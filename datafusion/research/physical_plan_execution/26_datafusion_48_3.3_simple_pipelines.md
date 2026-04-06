@@ -1,5 +1,39 @@
 # Module Teardown: Simple Pipelines (Stateless Stream Nesting)
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [3.1 FilterExec: execute() and Stream Creation](#31-filterexec-execute-and-stream-creation)
+  - [3.2 FilterExecStream::poll_next() -- The Core Filter Loop](#32-filterexecstreampoll_next-the-core-filter-loop)
+  - [3.3 Batch Coalescing Inside FilterExec](#33-batch-coalescing-inside-filterexec)
+  - [3.4 ProjectionExec: execute() and Stream Creation](#34-projectionexec-execute-and-stream-creation)
+  - [3.5 ProjectionStream::poll_next() -- Columnar Projection](#35-projectionstreampoll_next-columnar-projection)
+  - [3.6 Zero-Copy Proof: Column::evaluate()](#36-zero-copy-proof-columnevaluate)
+  - [Sequence Diagram](#sequence-diagram)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+  - [4.1 Single-Threaded Per Partition](#41-single-threaded-per-partition)
+  - [4.2 State Machine in FilterExecStream](#42-state-machine-in-filterexecstream)
+  - [4.3 ProjectionStream: Purely Stateless](#43-projectionstream-purely-stateless)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+  - [5.1 FilterExec Memory](#51-filterexec-memory)
+  - [5.2 ProjectionExec Memory](#52-projectionexec-memory)
+  - [5.3 No Batch Amplification in ProjectionStream](#53-no-batch-amplification-in-projectionstream)
+  - [5.4 FilterExec Batch Coalescing Prevents Fragment Proliferation](#54-filterexec-batch-coalescing-prevents-fragment-proliferation)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Insight 1: FilterExec Has Inline Batch Coalescing (No Separate CoalesceBatchesExec Needed)](#insight-1-filterexec-has-inline-batch-coalescing-no-separate-coalescebatchesexec-needed)
+  - [Insight 2: Column::evaluate() is Truly Zero-Copy via Arc::clone](#insight-2-columnevaluate-is-truly-zero-copy-via-arcclone)
+  - [Insight 3: FilterExec Supports Embedded Projection (Filter+Project Fusion)](#insight-3-filterexec-supports-embedded-projection-filterproject-fusion)
+  - [Insight 4: DataFusion Uses Optimizer-Based Fusion, Not a Single Fused Operator](#insight-4-datafusion-uses-optimizer-based-fusion-not-a-single-fused-operator)
+  - [Insight 5: The filter_and_project() Helper Reveals the Optimal Ordering](#insight-5-the-filter_and_project-helper-reveals-the-optimal-ordering)
+  - [Insight 6: ProjectionStream is a Pure Functor -- No Buffering](#insight-6-projectionstream-is-a-pure-functor-no-buffering)
+  - [Insight 7: CoalesceBatchesExec is Deprecated -- Coalescing is Now Operator-Local](#insight-7-coalescebatchesexec-is-deprecated-coalescing-is-now-operator-local)
+  - [Insight 8: Nested Stream Model vs. Trino's Operator Model](#insight-8-nested-stream-model-vs-trinos-operator-model)
+
+
 ## 0. Research Focus
 * **Task ID:** 3.3
 * **Focus:** Trace the `poll_next()` loop in `FilterExecStream`. How does it pull a batch, apply the mask, and yield the result without row-by-row iteration? Confirm the zero-copy nature of `ProjectionExecStream`. Contrast this nested struct model with Trino's fused `ScanFilterAndProjectOperator`.

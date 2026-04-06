@@ -1,5 +1,18 @@
 # Module Teardown: Async Physical Data Mapping (The S3 Bridge)
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [Sequence Diagram: Full Parquet Read Path](#sequence-diagram-full-parquet-read-path)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+- [6. Key Design Insights](#6-key-design-insights)
+
+
 ## 0. Research Focus
 * **Task ID:** 1.4
 * **Focus:** Trace the execution of `ParquetExec::execute()`. How does it interact with `object_store` to fetch byte ranges asynchronously? Trace `ParquetRecordBatchStream` to see how `tokio::spawn` is used to parallelize I/O and decoding.

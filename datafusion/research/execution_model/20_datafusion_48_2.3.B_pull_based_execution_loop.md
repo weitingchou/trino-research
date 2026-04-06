@@ -1,5 +1,28 @@
 # Module Teardown: The Pull-Based Execution Loop (`poll_next`)
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [Sequence Diagram: A Single poll_next Cascade](#sequence-diagram-a-single-poll_next-cascade)
+  - [FilterExecStream::poll_next() — The Complex Case](#filterexecstreampoll_next-the-complex-case)
+  - [ProjectionStream::poll_next() — The Simple Case](#projectionstreampoll_next-the-simple-case)
+  - [ObservedStream::poll_next() — Metrics + Limit Wrapper](#observedstreampoll_next-metrics-limit-wrapper)
+  - [BaselineMetrics::record_poll() — The Universal Metrics Hook](#baselinemetricsrecord_poll-the-universal-metrics-hook)
+  - [The `ready!` Macro — Where Tokio Gets Control](#the-ready-macro-where-tokio-gets-control)
+  - [CooperativeStream — Tokio Task Budget Integration](#cooperativestream-tokio-task-budget-integration)
+  - [SortPreservingMergeExec — Loser Tree K-Way Merge](#sortpreservingmergeexec-loser-tree-k-way-merge)
+  - [HashJoinStream — State Machine Poll Loop](#hashjoinstream-state-machine-poll-loop)
+  - [GroupedHashAggregateStream — OOM-Aware Aggregation](#groupedhashaggregatestream-oom-aware-aggregation)
+  - [Contrast with Trino's Driver Loop](#contrast-with-trinos-driver-loop)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+- [6. Key Design Insights](#6-key-design-insights)
+
+
 ## 0. Research Focus
 * **Task ID:** 2.3.B
 * **Focus:** This is the core engine loop. Trace how `poll_next()` cascades down the stream chain. Note how the `ready!` macro bubbles up `Poll::Pending` asynchronously. Document where the stream hits `.await` points that yield control back to Tokio. Contrast with Trino's `Driver` loop manually checking `operator.needsInput()` and `operator.isBlocked()`. How does `BaselineMetrics::record_poll()` wrap every stream for observability?

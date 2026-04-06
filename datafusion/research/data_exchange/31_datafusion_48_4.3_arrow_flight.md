@@ -1,5 +1,40 @@
 # Module Teardown: The Network Data Plane (Arrow Flight)
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Primary Source Files](#primary-source-files)
+  - [Key Data Structures](#key-data-structures)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [3.1 Encoding Pipeline (Send Side)](#31-encoding-pipeline-send-side)
+  - [3.2 Decoding Pipeline (Receive Side)](#32-decoding-pipeline-receive-side)
+  - [3.3 FlightRecordBatchStream filtering](#33-flightrecordbatchstream-filtering)
+  - [Sequence Diagram](#sequence-diagram)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+  - [4.1 The gRPC Streaming Model](#41-the-grpc-streaming-model)
+  - [4.2 Error Propagation with FallibleRequestStream](#42-error-propagation-with-falliblerequeststream)
+  - [4.3 Server-Side Implementation](#43-server-side-implementation)
+  - [4.4 State in the Decoder](#44-state-in-the-decoder)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+  - [5.1 The Zero-Copy Chain](#51-the-zero-copy-chain)
+  - [5.2 Memory Accounting](#52-memory-accounting)
+  - [5.3 Message Size Budget](#53-message-size-budget)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Insight 1: Arrow IPC as the Universal Wire Format](#insight-1-arrow-ipc-as-the-universal-wire-format)
+  - [Insight 2: Dictionary Handling is the Hardest Problem](#insight-2-dictionary-handling-is-the-hardest-problem)
+  - [Insight 3: Zero-Copy is Structural, Not Just an Optimization](#insight-3-zero-copy-is-structural-not-just-an-optimization)
+  - [Insight 4: The Queue-Based Encoding Pattern](#insight-4-the-queue-based-encoding-pattern)
+  - [Insight 5: FlightDescriptor is a One-Shot Attachment](#insight-5-flightdescriptor-is-a-one-shot-attachment)
+  - [Insight 6: Contrast with Trino's Data Exchange Model](#insight-6-contrast-with-trinos-data-exchange-model)
+- [7. The Complete FlightClient API](#7-the-complete-flightclient-api)
+- [8. IPC Write/Read Options](#8-ipc-writeread-options)
+  - [IpcWriteOptions](#ipcwriteoptions)
+  - [DictionaryTracker](#dictionarytracker)
+
+
 ## 0. Research Focus
 * **Task ID:** 4.3
 * **Focus:** Analyze how a `RecordBatch` stream is converted into a stream of `FlightData` protobuf messages via `FlightDataEncoder`. Trace the receiving side (`FlightDataDecoder`) to confirm how the byte payloads are wrapped into `Buffer`s without copying. Contrast the Arrow Flight gRPC streaming model with Trino's custom token-based HTTP chunk pulling.

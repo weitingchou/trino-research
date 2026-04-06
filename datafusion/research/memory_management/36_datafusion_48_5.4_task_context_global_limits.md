@@ -1,5 +1,38 @@
 # Module Teardown: Task Context and Global Limits
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [3.1 RuntimeEnv Construction](#31-runtimeenv-construction)
+  - [3.2 SessionContext -> SessionState -> TaskContext Chain](#32-sessioncontext-sessionstate-taskcontext-chain)
+  - [3.3 Operator Access to the Pool](#33-operator-access-to-the-pool)
+  - [Sequence Diagram](#sequence-diagram)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+  - [4.1 Pool Sharing Across Queries](#41-pool-sharing-across-queries)
+  - [4.2 Atomic Operations in Pool Implementations](#42-atomic-operations-in-pool-implementations)
+  - [4.3 RAII Memory Lifecycle](#43-raii-memory-lifecycle)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+  - [5.1 Memory-Related Configuration Options](#51-memory-related-configuration-options)
+  - [5.2 Runtime Configuration Options](#52-runtime-configuration-options)
+  - [5.3 Memory Pool Types](#53-memory-pool-types)
+  - [5.4 DiskManager Configuration](#54-diskmanager-configuration)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Insight 1: The Pool Lives in RuntimeEnv, NOT in SessionConfig](#insight-1-the-pool-lives-in-runtimeenv-not-in-sessionconfig)
+  - [Insight 2: No Per-Query Memory Limits -- Pool is Process-Global](#insight-2-no-per-query-memory-limits-pool-is-process-global)
+  - [Insight 3: Default is Unbounded -- Explicit Opt-In for Limits](#insight-3-default-is-unbounded-explicit-opt-in-for-limits)
+  - [Insight 4: Pragmatic Memory Tracking -- Only Large Consumers Register](#insight-4-pragmatic-memory-tracking-only-large-consumers-register)
+  - [Insight 5: Operators Explicitly Manage Spillable vs Unspillable Reservations](#insight-5-operators-explicitly-manage-spillable-vs-unspillable-reservations)
+  - [Insight 6: TrackConsumersPool is Decorative -- Better OOM Error Messages](#insight-6-trackconsumerspool-is-decorative-better-oom-error-messages)
+  - [Insight 7: Two-Level Resource Management -- Memory Pool vs DiskManager](#insight-7-two-level-resource-management-memory-pool-vs-diskmanager)
+  - [Insight 8: SessionConfig and RuntimeEnv are Independent -- Joined Only at SessionState](#insight-8-sessionconfig-and-runtimeenv-are-independent-joined-only-at-sessionstate)
+  - [Insight 9: FairSpillPool Prevents Starvation Among Spillable Operators](#insight-9-fairspillpool-prevents-starvation-among-spillable-operators)
+  - [Insight 10: MemoryConsumer Identity is Process-Unique via AtomicUsize](#insight-10-memoryconsumer-identity-is-process-unique-via-atomicusize)
+
+
 ## 0. Research Focus
 * **Task ID:** 5.4
 * **Focus:** Trace how the `MemoryPool` is instantiated and attached to the `TaskContext`. How are global memory limits defined in the `SessionConfig` and passed down to the physical execution plan?

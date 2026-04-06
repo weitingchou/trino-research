@@ -1,5 +1,44 @@
 # Module Teardown: Physical Expressions & Compute Kernels
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [3.1 The `PhysicalExpr` Trait Contract](#31-the-physicalexpr-trait-contract)
+  - [3.2 `ColumnarValue`: The Expression Result Type](#32-columnarvalue-the-expression-result-type)
+  - [3.3 Leaf Expression Evaluation](#33-leaf-expression-evaluation)
+  - [3.4 BinaryExpr: The Heart of Expression Evaluation](#34-binaryexpr-the-heart-of-expression-evaluation)
+  - [3.5 The `apply()` and `apply_cmp()` Bridge (datum.rs)](#35-the-apply-and-apply_cmp-bridge-datumrs)
+  - [3.6 Short-Circuit Evaluation in BinaryExpr](#36-short-circuit-evaluation-in-binaryexpr)
+  - [3.7 Unary Expression Evaluation](#37-unary-expression-evaluation)
+  - [3.8 FilterExec: Connecting Expressions to Record Batch Filtering](#38-filterexec-connecting-expressions-to-record-batch-filtering)
+  - [Sequence Diagram: Filter Predicate Evaluation](#sequence-diagram-filter-predicate-evaluation)
+  - [Sequence Diagram: AND with Short-Circuit PreSelection](#sequence-diagram-and-with-short-circuit-preselection)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+  - [Thread Safety](#thread-safety)
+  - [Dynamic Expressions](#dynamic-expressions)
+  - [InListExpr Static Filter](#inlistexpr-static-filter)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+  - [Allocation Patterns](#allocation-patterns)
+  - [Scalar Optimization Impact](#scalar-optimization-impact)
+  - [Batch Size Tuning](#batch-size-tuning)
+  - [evaluate_selection() Optimization](#evaluate_selection-optimization)
+  - [The `scatter()` Function](#the-scatter-function)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Insight 1: ColumnarValue Dual-Representation Avoids Allocation in the Common Case](#insight-1-columnarvalue-dual-representation-avoids-allocation-in-the-common-case)
+  - [Insight 2: Short-Circuit Evaluation with PreSelection is a Three-Level Strategy](#insight-2-short-circuit-evaluation-with-preselection-is-a-three-level-strategy)
+  - [Insight 3: Arrow Kernels Provide the SIMD Foundation, DataFusion Provides the Dispatch](#insight-3-arrow-kernels-provide-the-simd-foundation-datafusion-provides-the-dispatch)
+  - [Insight 4: The Expression Tree is a Physical DAG with Pointer-Equality Optimization](#insight-4-the-expression-tree-is-a-physical-dag-with-pointer-equality-optimization)
+  - [Insight 5: Physical Expression Simplification Operates at Three Levels](#insight-5-physical-expression-simplification-operates-at-three-levels)
+  - [Insight 6: Logical-to-Physical Expression Translation is a Direct Recursive Mapping](#insight-6-logical-to-physical-expression-translation-is-a-direct-recursive-mapping)
+  - [Insight 7: InListExpr Uses Hash-Based Static Filters for O(1) Lookup](#insight-7-inlistexpr-uses-hash-based-static-filters-for-o1-lookup)
+  - [Insight 8: evaluate_selection() Avoids Evaluating Fallible Expressions on Empty Selection](#insight-8-evaluate_selection-avoids-evaluating-fallible-expressions-on-empty-selection)
+  - [Insight 9: FilterExec's Batch Coalescing Prevents the Tiny-Batch Problem](#insight-9-filterexecs-batch-coalescing-prevents-the-tiny-batch-problem)
+
+
 ## 0. Research Focus
 * **Task ID:** 3.2
 * **Focus:** Analyze the `PhysicalExpr` trait and its `evaluate()` method. Trace a simple filter predicate evaluation to a `BooleanArray`. Trace `arrow::compute::filter_record_batch` for SIMD application. Understand how expressions compose into trees and delegate to Arrow compute kernels.

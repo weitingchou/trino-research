@@ -1,5 +1,20 @@
 # Module Teardown: Columnar Construction and Bitmaps (`Array`)
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [StringArray Memory Layout Example](#stringarray-memory-layout-example)
+  - [Sequence Diagram: Reading a String Value](#sequence-diagram-reading-a-string-value)
+  - [Zero-Copy Slicing: `GenericByteArray::slice(offset, length)`](#zero-copy-slicing-genericbytearraysliceoffset-length)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+- [6. Key Design Insights](#6-key-design-insights)
+
+
 ## 0. Research Focus
 * **Task ID:** 1.2
 * **Focus:** Inspect the internal fields of a `StringArray`. How does it map to multiple `Buffer`s? Trace the `NullBuffer` implementation — how does Arrow pack 8 null values into a single byte, and how does this contrast with Trino's `boolean[]`?

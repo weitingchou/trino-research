@@ -1,5 +1,40 @@
 # Module Teardown: The Distributed Control Plane (Plan Serialization)
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Primary Source Files](#primary-source-files)
+  - [Key Data Structures](#key-data-structures)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [3.1 Serialization Path: `Arc<dyn ExecutionPlan>` -> bytes](#31-serialization-path-arcdyn-executionplan-bytes)
+  - [3.2 Deserialization Path: bytes -> `Arc<dyn ExecutionPlan>`](#32-deserialization-path-bytes-arcdyn-executionplan)
+  - [Sequence Diagram](#sequence-diagram)
+- [4. Operator Serialization Deep Dives](#4-operator-serialization-deep-dives)
+  - [4.1 HashJoinExecNode](#41-hashjoinexecnode)
+  - [4.2 FilterExecNode](#42-filterexecnode)
+  - [4.3 ParquetScanExecNode / FileScanExecConf](#43-parquetscanexecnode-filescanexecconf)
+  - [4.4 Statistics and Schema Serialization](#44-statistics-and-schema-serialization)
+- [5. Expression Serialization](#5-expression-serialization)
+  - [5.1 PhysicalExprNode protobuf schema](#51-physicalexprnode-protobuf-schema)
+  - [5.2 Serialization via downcast chain (`to_proto.rs`)](#52-serialization-via-downcast-chain-to_protors)
+  - [5.3 Deserialization via match (`from_proto.rs`)](#53-deserialization-via-match-from_protors)
+- [6. The `PhysicalExtensionCodec` Trait](#6-the-physicalextensioncodec-trait)
+- [7. Expression Deduplication](#7-expression-deduplication)
+- [8. Round-Trip Guarantees](#8-round-trip-guarantees)
+- [9. Concurrency & State Management](#9-concurrency-state-management)
+- [10. Memory & Resource Profile](#10-memory-resource-profile)
+- [11. Key Design Insights](#11-key-design-insights)
+  - [Insight 1: Downcast-chain pattern instead of visitor/registration](#insight-1-downcast-chain-pattern-instead-of-visitorregistration)
+  - [Insight 2: Three-layer abstraction for extensibility](#insight-2-three-layer-abstraction-for-extensibility)
+  - [Insight 3: The plan tree, not just plan nodes, is the unit of serialization](#insight-3-the-plan-tree-not-just-plan-nodes-is-the-unit-of-serialization)
+  - [Insight 4: Runtime state is intentionally excluded](#insight-4-runtime-state-is-intentionally-excluded)
+  - [Insight 5: Contrast with Trino's REST/JSON approach](#insight-5-contrast-with-trinos-restjson-approach)
+  - [Insight 6: Expression deduplication via Arc pointer hashing](#insight-6-expression-deduplication-via-arc-pointer-hashing)
+
+
 ## 0. Research Focus
 * **Task ID:** 4.4
 * **Focus:** How does DataFusion serialize a complex Physical Plan (e.g., a HashJoin tree) into a byte array so it can be sent to remote workers? Trace the `AsExecutionPlan` trait. Contrast this Protobuf-based physical plan transmission with Trino's REST/JSON `TaskUpdateRequest`.

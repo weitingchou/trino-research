@@ -1,5 +1,41 @@
 # Module Teardown: Complex Pipelines -- Stateful Breakers & Joins
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [3.1 HashJoinExec: Build Phase](#31-hashjoinexec-build-phase)
+  - [3.2 JoinHashMap Construction: Chained LIFO Structure](#32-joinhashmap-construction-chained-lifo-structure)
+  - [3.3 HashJoinStream State Machine](#33-hashjoinstream-state-machine)
+  - [3.4 Probe-Side Processing Detail](#34-probe-side-processing-detail)
+  - [3.5 Join Type Effects on the State Machine](#35-join-type-effects-on-the-state-machine)
+  - [3.6 AggregateExec and GroupedHashAggregateStream](#36-aggregateexec-and-groupedhashaggregatestream)
+  - [3.7 GroupValues: Group Key Interning](#37-groupvalues-group-key-interning)
+  - [Sequence Diagram: Full HashJoin Execution](#sequence-diagram-full-hashjoin-execution)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+  - [4.1 No `tokio::spawn` for Build Side](#41-no-tokiospawn-for-build-side)
+  - [4.2 Visited Bitmap Synchronization](#42-visited-bitmap-synchronization)
+  - [4.3 Null-Aware Anti Join: Cross-Partition Atomics](#43-null-aware-anti-join-cross-partition-atomics)
+  - [4.4 AggregateExec: No Cross-Partition Sharing](#44-aggregateexec-no-cross-partition-sharing)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+  - [5.1 HashJoinExec Memory](#51-hashjoinexec-memory)
+  - [5.2 ArrayMap Optimization](#52-arraymap-optimization)
+  - [5.3 AggregateExec Memory and Spilling](#53-aggregateexec-memory-and-spilling)
+  - [5.4 Output Coalescing](#54-output-coalescing)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Insight 1: Pipeline Breakers Are Modeled as Async State Machines, Not Separate Threads](#insight-1-pipeline-breakers-are-modeled-as-async-state-machines-not-separate-threads)
+  - [Insight 2: LIFO Chained Hash Map Preserves Input Order Through Reverse Insertion](#insight-2-lifo-chained-hash-map-preserves-input-order-through-reverse-insertion)
+  - [Insight 3: ProcessProbeBatch Is Synchronous With Batch-Size Limiting](#insight-3-processprobebatch-is-synchronous-with-batch-size-limiting)
+  - [Insight 4: Join Type Affects Three Distinct Code Paths](#insight-4-join-type-affects-three-distinct-code-paths)
+  - [Insight 5: GroupValues Uses Vectorized Interning for Performance](#insight-5-groupvalues-uses-vectorized-interning-for-performance)
+  - [Insight 6: Aggregation Has a "Partial Skip" Optimization for High-Cardinality Groups](#insight-6-aggregation-has-a-partial-skip-optimization-for-high-cardinality-groups)
+  - [Insight 7: AggregateExec Uses a Separation of Concerns Between GroupValues and Accumulators](#insight-7-aggregateexec-uses-a-separation-of-concerns-between-groupvalues-and-accumulators)
+  - [Insight 8: Both Hash Join and Hash Aggregate Use hashbrown's HashTable, Not HashMap](#insight-8-both-hash-join-and-hash-aggregate-use-hashbrowns-hashtable-not-hashmap)
+
+
 ## 0. Research Focus
 * **Task ID:** 3.4
 * **Focus:** Trace `HashJoinExec`. How does the async state machine transition between the Build phase and the Probe phase inside its `poll_next()` implementation? Trace the construction of the `JoinHashMap` and see if `tokio::spawn` is used to collect the build side concurrently. Also trace `AggregateExec` and `GroupedHashAggregateStream` to understand how stateful operators break the simple pipeline model.

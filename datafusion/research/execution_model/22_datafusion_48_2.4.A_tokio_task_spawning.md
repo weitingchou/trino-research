@@ -1,5 +1,23 @@
 # Module Teardown: Tokio Task Spawning
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [Sequence Diagram: `collect_partitioned` — Parallel Partition Execution](#sequence-diagram-collect_partitioned-parallel-partition-execution)
+  - [`collect_partitioned` implementation:](#collect_partitioned-implementation)
+  - [`spawn_buffered` — Decoupling producer and consumer:](#spawn_buffered-decoupling-producer-and-consumer)
+  - [`SpawnedTask` — Abort-on-drop safety:](#spawnedtask-abort-on-drop-safety)
+  - [`trace_future` / `trace_block` — Global Tracer Injection](#trace_future-trace_block-global-tracer-injection)
+  - [`EnsureCooperative` — Automatic Cooperative Scheduling](#ensurecooperative-automatic-cooperative-scheduling)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+- [6. Key Design Insights](#6-key-design-insights)
+
+
 ## 0. Research Focus
 * **Task ID:** 2.4.A
 * **Focus:** How are multiple partitions mapped to actual CPU threads? Trace `SpawnedTask` (abort-on-drop wrapper around `tokio::task::JoinHandle`), `JoinSet` (managed task set), `spawn_buffered()` (channel-based stream decoupling), and `collect_partitioned()` (one Tokio task per partition). Why is raw `tokio::spawn` banned in operator code?

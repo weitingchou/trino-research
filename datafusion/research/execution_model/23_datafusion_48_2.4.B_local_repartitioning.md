@@ -1,5 +1,26 @@
 # Module Teardown: Local Repartitioning (The Exchange)
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [Sequence Diagram: RepartitionExec N->M Data Flow](#sequence-diagram-repartitionexec-n-m-data-flow)
+  - [execute() — Entry Point (Lazy Initialization)](#execute-entry-point-lazy-initialization)
+  - [consume_input_streams() — Channel and Task Setup](#consume_input_streams-channel-and-task-setup)
+  - [pull_from_input() — The Input Task](#pull_from_input-the-input-task)
+  - [BatchPartitioner: Hash vs Round-Robin](#batchpartitioner-hash-vs-round-robin)
+  - [The Custom Gate-Based Channel System](#the-custom-gate-based-channel-system)
+  - [Channel Topology: Preserve-Order vs Standard](#channel-topology-preserve-order-vs-standard)
+  - [PerPartitionStream: Output State Machine](#perpartitionstream-output-state-machine)
+  - [Error Propagation and Task Cleanup](#error-propagation-and-task-cleanup)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+- [6. Key Design Insights](#6-key-design-insights)
+
+
 ## 0. Research Focus
 * **Task ID:** 2.4.B
 * **Focus:** Trace `RepartitionExec`. How does it take N input streams and map them to M output streams? Analyze how it uses channels to move `RecordBatch`es across thread boundaries. How does it handle backpressure (channel capacity)? How does hash vs. round-robin routing work?

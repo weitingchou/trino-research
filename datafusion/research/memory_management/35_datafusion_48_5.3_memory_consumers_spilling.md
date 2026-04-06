@@ -1,5 +1,39 @@
 # Module Teardown: Memory Consumers & Proactive Spilling
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [3.1 MemoryConsumer Builder Pattern & Registration](#31-memoryconsumer-builder-pattern-registration)
+  - [3.2 ExternalSorter: Dual Reservation Strategy](#32-externalsorter-dual-reservation-strategy)
+  - [3.3 ExternalSorter Spill Trigger Path](#33-externalsorter-spill-trigger-path)
+  - [3.4 GroupedHashAggregateStream: Three OOM Modes](#34-groupedhashaggregatestream-three-oom-modes)
+  - [3.5 HashJoinExec: Non-Spillable Build Side](#35-hashjoinexec-non-spillable-build-side)
+  - [3.6 RepartitionExec: Spillable Channel Memory](#36-repartitionexec-spillable-channel-memory)
+  - [3.7 Other Operator Registrations](#37-other-operator-registrations)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+  - [The `can_spill` Contract and FairSpillPool](#the-can_spill-contract-and-fairspillpool)
+  - [AtomicUsize for Reservation Size](#atomicusize-for-reservation-size)
+  - [No Background Thread](#no-background-thread)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+  - [ExternalSorter Memory Lifecycle](#externalsorter-memory-lifecycle)
+  - [GroupedHashAggregateStream Memory Lifecycle](#groupedhashaggregatestream-memory-lifecycle)
+  - [Memory Estimation for Sort](#memory-estimation-for-sort)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Insight 1: Synchronous Inline Spilling Eliminates Coordination Complexity](#insight-1-synchronous-inline-spilling-eliminates-coordination-complexity)
+  - [Insight 2: Dual Reservation Pattern Protects Merge Phase](#insight-2-dual-reservation-pattern-protects-merge-phase)
+  - [Insight 3: The `can_spill` Flag is a Contract, Not a Mechanism](#insight-3-the-can_spill-flag-is-a-contract-not-a-mechanism)
+  - [Insight 4: Aggregate Sort Headroom Prevents OOM During Spill](#insight-4-aggregate-sort-headroom-prevents-oom-during-spill)
+  - [Insight 5: One-Shot Spill Merge Prevents Recursive Spilling](#insight-5-one-shot-spill-merge-prevents-recursive-spilling)
+  - [Insight 6: RepartitionExec Demonstrates Batch-Level Spill Granularity](#insight-6-repartitionexec-demonstrates-batch-level-spill-granularity)
+  - [Insight 7: RAII Registration Lifecycle via Arc Reference Counting](#insight-7-raii-registration-lifecycle-via-arc-reference-counting)
+  - [Insight 8: `SharedMemoryReservation` Pattern for Multi-Task Access](#insight-8-sharedmemoryreservation-pattern-for-multi-task-access)
+  - [Insight 9: `MemoryConsumer` is a One-Shot Factory](#insight-9-memoryconsumer-is-a-one-shot-factory)
+
+
 ## 0. Research Focus
 * **Task ID:** 5.3
 * **Focus:** Trace how a specific operator (like `ExternalSorter`) registers as a `MemoryConsumer`. Trace the execution path when `reservation.try_grow()` fails. How does this directly trigger the spilling logic without requiring a background revoking thread?

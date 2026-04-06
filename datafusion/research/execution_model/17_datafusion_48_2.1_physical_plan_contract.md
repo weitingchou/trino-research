@@ -1,5 +1,23 @@
 # Module Teardown: The Physical Plan Contract (`ExecutionPlan` & Partitioning)
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [Sequence Diagram: From `collect()` to Partition Streams](#sequence-diagram-from-collect-to-partition-streams)
+  - [How operators set their partitioning:](#how-operators-set-their-partitioning)
+  - [How operators set PlanProperties beyond Partitioning:](#how-operators-set-planproperties-beyond-partitioning)
+  - [The `EnforceDistribution` Optimizer Rule](#the-enforcedistribution-optimizer-rule)
+  - [The `repartitioned()` Method](#the-repartitioned-method)
+  - [Top-level collection APIs:](#top-level-collection-apis)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+- [6. Key Design Insights](#6-key-design-insights)
+
+
 ## 0. Research Focus
 * **Task ID:** 2.1
 * **Focus:** Analyze the `ExecutionPlan` trait. Look at `properties()` (which defines partitioning and ordering via `PlanProperties`) and the `execute()` method. How does `execute()` take a partition index and a `TaskContext` to return a `SendableRecordBatchStream`? Trace how `output_partitioning()` declares the degree of concurrency. Analyze the `Partitioning` enum (`RoundRobinBatch`, `Hash`, `UnknownPartitioning`) and the `Distribution` enum. How does the optimizer bridge the gap between `required_input_distribution()` and `output_partitioning()` by inserting `RepartitionExec` or `CoalescePartitionsExec`?

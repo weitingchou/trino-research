@@ -1,5 +1,45 @@
 # Module Teardown: The RAII Memory Reservation Lifecycle
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [3.1 Creation Chain: `MemoryConsumer::new("name").register(&pool)`](#31-creation-chain-memoryconsumernewnameregisterpool)
+  - [3.2 `try_grow(additional: usize)` -- Fallible Memory Acquisition](#32-try_growadditional-usize-fallible-memory-acquisition)
+  - [3.3 `grow(capacity: usize)` -- Infallible Growth](#33-growcapacity-usize-infallible-growth)
+  - [3.4 `try_resize(new_size: usize)` -- Grow or Shrink to Target](#34-try_resizenew_size-usize-grow-or-shrink-to-target)
+  - [3.5 `shrink(capacity: usize)` -- Return Memory to Pool](#35-shrinkcapacity-usize-return-memory-to-pool)
+  - [3.6 `try_shrink(capacity: usize)` -- Non-Panicking Shrink](#36-try_shrinkcapacity-usize-non-panicking-shrink)
+  - [3.7 `free()` -- Zero Out the Reservation](#37-free-zero-out-the-reservation)
+  - [3.8 `split(capacity: usize)` -- Create a Child Reservation](#38-splitcapacity-usize-create-a-child-reservation)
+  - [3.9 `new_empty()` -- Sibling Reservation with Zero Bytes](#39-new_empty-sibling-reservation-with-zero-bytes)
+  - [3.10 `take(&mut self)` -- Transfer All Bytes](#310-takemut-self-transfer-all-bytes)
+  - [Sequence Diagram: Full Lifecycle](#sequence-diagram-full-lifecycle)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+  - [4.1 Atomic Operations on `size`](#41-atomic-operations-on-size)
+  - [4.2 The `fetch_update` Pattern for Checked Subtraction](#42-the-fetch_update-pattern-for-checked-subtraction)
+  - [4.3 Pool-Level Synchronization](#43-pool-level-synchronization)
+  - [4.4 `SharedRegistration` and Arc Refcounting](#44-sharedregistration-and-arc-refcounting)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+  - [5.1 The Drop Guarantee](#51-the-drop-guarantee)
+  - [5.2 The Two-Level Drop Cascade](#52-the-two-level-drop-cascade)
+  - [5.3 Operator Usage Patterns](#53-operator-usage-patterns)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Insight 1: Compiler-Enforced Cleanup vs. Trino's Manual `free()` Calls](#insight-1-compiler-enforced-cleanup-vs-trinos-manual-free-calls)
+  - [Insight 2: `Arc<SharedRegistration>` Enables Zero-Cost Reservation Splitting](#insight-2-arcsharedregistration-enables-zero-cost-reservation-splitting)
+  - [Insight 3: Spillable vs. Non-Spillable Creates a Two-Tier Memory Economy](#insight-3-spillable-vs-non-spillable-creates-a-two-tier-memory-economy)
+  - [Insight 4: `take()` Prevents Race Conditions During Reservation Transfer](#insight-4-take-prevents-race-conditions-during-reservation-transfer)
+  - [Insight 5: The `_reservation` Field Pattern is Compositional RAII](#insight-5-the-_reservation-field-pattern-is-compositional-raii)
+  - [Insight 6: Idempotent `free()` via `swap(0)` Prevents Double-Free](#insight-6-idempotent-free-via-swap0-prevents-double-free)
+  - [Insight 7: Process-Unique IDs Enable Per-Consumer Tracking Across Partitions](#insight-7-process-unique-ids-enable-per-consumer-tracking-across-partitions)
+  - [Insight 8: `VecAllocExt` and `HashTableAllocExt` — Incremental Accounting Proxies](#insight-8-vecallocext-and-hashtableallocext-incremental-accounting-proxies)
+  - [Insight 9: `ReservationStream` — Stream-Lifetime Reservation Binding](#insight-9-reservationstream-stream-lifetime-reservation-binding)
+  - [Insight 10: `try_resize` Avoids Release-Then-Reacquire](#insight-10-try_resize-avoids-release-then-reacquire)
+
+
 ## 0. Research Focus
 * **Task ID:** 5.2
 * **Focus:** Trace the creation of a `MemoryReservation`. Look closely at its `Drop` implementation. How does it guarantee that `pool.shrink()` is called when the reservation is destroyed? Contrast this compiler-enforced safety with Trino's `free()` calls.

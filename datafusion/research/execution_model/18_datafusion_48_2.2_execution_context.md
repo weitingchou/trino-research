@@ -1,5 +1,23 @@
 # Module Teardown: The Execution Context (`TaskContext` & Resource Wiring)
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [Sequence Diagram: TaskContext Wiring](#sequence-diagram-taskcontext-wiring)
+  - [Construction path:](#construction-path)
+  - [Key accessor methods:](#key-accessor-methods)
+  - [RuntimeEnv construction via builder:](#runtimeenv-construction-via-builder)
+  - [How operators access resources (real code patterns):](#how-operators-access-resources-real-code-patterns)
+  - [Key SessionConfig execution options:](#key-sessionconfig-execution-options)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+- [6. Key Design Insights](#6-key-design-insights)
+
+
 ## 0. Research Focus
 * **Task ID:** 2.2
 * **Focus:** Trace the `TaskContext`. How is it wired up before execution begins? How does it link the `MemoryPool`, `DiskManager`, `ObjectStoreRegistry`, and session properties to the execution of a specific partition? Compare it to Trino's `DriverContext` — notice how lightweight it is, relying on Rust's call stack rather than a complex tracking tree.

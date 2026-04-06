@@ -1,5 +1,41 @@
 # Module Teardown: Proactive Disk Spilling (ExternalSorter, SpillManager, DiskManager)
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [3.1 SortExec::execute() -- Creating the ExternalSorter](#31-sortexecexecute-creating-the-externalsorter)
+  - [3.2 ExternalSorter Construction](#32-externalsorter-construction)
+  - [3.3 The Spill Trigger: insert_batch -> try_grow -> spill](#33-the-spill-trigger-insert_batch-try_grow-spill)
+  - [3.4 Memory Estimation: get_reserved_bytes_for_record_batch](#34-memory-estimation-get_reserved_bytes_for_record_batch)
+  - [Sequence Diagram](#sequence-diagram)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+  - [4.1 Memory Pool Fairness (FairSpillPool)](#41-memory-pool-fairness-fairspillpool)
+  - [4.2 ExternalSorter -- Single-Threaded State Machine](#42-externalsorter-single-threaded-state-machine)
+  - [4.3 DiskManager -- Mutex for Directory Creation](#43-diskmanager-mutex-for-directory-creation)
+  - [4.4 RefCountedTempFile -- RAII Cleanup](#44-refcountedtempfile-raii-cleanup)
+  - [4.5 SpillReaderStream -- Spawned Blocking Tasks](#45-spillreaderstream-spawned-blocking-tasks)
+  - [4.6 Merge Reservation Transfer (Anti-Starvation)](#46-merge-reservation-transfer-anti-starvation)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+  - [5.1 Configuration Options](#51-configuration-options)
+  - [5.2 Memory Lifecycle in ExternalSorter](#52-memory-lifecycle-in-externalsorter)
+  - [5.3 Disk Usage Tracking](#53-disk-usage-tracking)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Insight 1: The Spill Decision is Cooperative, Not Preemptive](#insight-1-the-spill-decision-is-cooperative-not-preemptive)
+  - [Insight 2: Two-Phase Spill Writing (Incremental Append)](#insight-2-two-phase-spill-writing-incremental-append)
+  - [Insight 3: StringView GC Before Spilling Prevents Buffer Bloat](#insight-3-stringview-gc-before-spilling-prevents-buffer-bloat)
+  - [Insight 4: Arrow IPC Stream Format (Not File Format) for Spilling](#insight-4-arrow-ipc-stream-format-not-file-format-for-spilling)
+  - [Insight 5: Alignment-Aware IPC Writing for Zero-Copy Read-Back](#insight-5-alignment-aware-ipc-writing-for-zero-copy-read-back)
+  - [Insight 6: Multi-Level Merge for Extremely Large Datasets](#insight-6-multi-level-merge-for-extremely-large-datasets)
+  - [Insight 7: Spilling is a Shared Infrastructure Across Operators](#insight-7-spilling-is-a-shared-infrastructure-across-operators)
+  - [Insight 8: InProgressSpillFile Uses Lazy Writer Initialization](#insight-8-inprogressspillfile-uses-lazy-writer-initialization)
+  - [Insight 9: Real-Time Disk Usage Enforcement](#insight-9-real-time-disk-usage-enforcement)
+  - [Insight 10: SortedSpillFile Tracks Max Batch Memory for Merge Planning](#insight-10-sortedspillfile-tracks-max-batch-memory-for-merge-planning)
+
+
 ## 0. Research Focus
 * **Task ID:** 3.5
 * **Focus:** Trace `ExternalSorter` (used by `SortExec`). Trace the exact failure path of `try_grow()`. How does the operator initiate `spill_to_disk()`? Look at how the `DiskManager` writes and later re-reads the `arrow-ipc` format. Trace `sort_spill_reservation_bytes` and `max_spill_file_size_bytes` config options.

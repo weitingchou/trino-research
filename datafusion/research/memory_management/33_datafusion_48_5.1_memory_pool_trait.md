@@ -1,5 +1,41 @@
 # Module Teardown: The `MemoryPool` Trait and Implementations
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [The Registration-Reservation Lifecycle](#the-registration-reservation-lifecycle)
+  - [Sequence Diagram: try_grow with FairSpillPool](#sequence-diagram-try_grow-with-fairspillpool)
+  - [Sequence Diagram: RAII Drop Chain](#sequence-diagram-raii-drop-chain)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+  - [UnboundedMemoryPool and GreedyMemoryPool: Lock-Free with AtomicUsize](#unboundedmemorypool-and-greedymemorypool-lock-free-with-atomicusize)
+  - [FairSpillPool: Mutex-Protected Compound State](#fairspillpool-mutex-protected-compound-state)
+  - [TrackConsumersPool: Dual Locking](#trackconsumerspool-dual-locking)
+  - [MemoryReservation Itself: AtomicUsize for Size](#memoryreservation-itself-atomicusize-for-size)
+  - [MemoryConsumer ID Generation: Global Atomic Counter](#memoryconsumer-id-generation-global-atomic-counter)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+  - [Per-Implementation Overhead](#per-implementation-overhead)
+  - [What Is NOT Tracked](#what-is-not-tracked)
+  - [Default Wiring](#default-wiring)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Insight 1: Cooperative Accounting, Not Allocation Interception](#insight-1-cooperative-accounting-not-allocation-interception)
+  - [Insight 2: FairSpillPool's Fair-Share Algorithm is Statically Per-Consumer, Not Dynamic](#insight-2-fairspillpools-fair-share-algorithm-is-statically-per-consumer-not-dynamic)
+  - [Insight 3: The `grow()` vs `try_grow()` Asymmetry is Intentional](#insight-3-the-grow-vs-try_grow-asymmetry-is-intentional)
+  - [Insight 4: SharedRegistration + Arc Enable Multiple Reservations Per Consumer](#insight-4-sharedregistration-arc-enable-multiple-reservations-per-consumer)
+  - [Insight 5: TrackConsumersPool is a Decorator, Not a Pool](#insight-5-trackconsumerspool-is-a-decorator-not-a-pool)
+  - [Insight 6: Trino vs DataFusion -- Fundamentally Different Memory Models](#insight-6-trino-vs-datafusion-fundamentally-different-memory-models)
+  - [Insight 7: ArrowMemoryPool Bridge](#insight-7-arrowmemorypool-bridge)
+  - [Insight 8: CLI Pool Selection Differs from Library Default](#insight-8-cli-pool-selection-differs-from-library-default)
+  - [Insight 9: Pool Overhead in Bytes](#insight-9-pool-overhead-in-bytes)
+  - [Insight 10: No Deadlock Risk — Lock Ordering Guarantee](#insight-10-no-deadlock-risk-lock-ordering-guarantee)
+  - [Insight 11: FairSpillPool's Non-Spillable Path is Pure First-Come-First-Served](#insight-11-fairspillpools-non-spillable-path-is-pure-first-come-first-served)
+  - [Insight 12: Cooperative, Not Enforced](#insight-12-cooperative-not-enforced)
+  - [Insight 13: MemoryConsumer Identity is ID-Based, Not Name-Based](#insight-13-memoryconsumer-identity-is-id-based-not-name-based)
+
+
 ## 0. Research Focus
 * **Task ID:** 5.1
 * **Focus:** Analyze the `MemoryPool` trait. Trace the implementations of `GreedyMemoryPool`, `FairSpillPool`, `UnboundedMemoryPool`, and `TrackConsumersPool`. How does `FairSpillPool` track per-consumer usage to ensure even distribution? Compare this to Trino's unified global pool.

@@ -1,5 +1,21 @@
 # Module Teardown: The `RecordBatch` Envelope
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [Sequence Diagram: project() — Zero-Copy Column Selection](#sequence-diagram-project-zero-copy-column-selection)
+  - [`project()` Implementation (exact source)](#project-implementation-exact-source)
+  - [`slice()` Implementation](#slice-implementation)
+  - [`try_new()` — Validated Construction](#try_new-validated-construction)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+- [6. Key Design Insights](#6-key-design-insights)
+
+
 ## 0. Research Focus
 * **Task ID:** 1.3
 * **Focus:** Analyze `RecordBatch::project()`. Confirm that it is a zero-copy operation manipulating `Arc<dyn Array>`. Compare its memory overhead to Trino's `Page`.

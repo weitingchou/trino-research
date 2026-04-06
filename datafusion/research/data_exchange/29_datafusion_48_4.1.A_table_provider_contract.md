@@ -1,5 +1,38 @@
 # Module Teardown: The Storage Plane -- TableProvider Contract
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Primary Source Files](#primary-source-files)
+  - [Key Data Structures](#key-data-structures)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [Read Path: Physical Planner Calls `scan()`](#read-path-physical-planner-calls-scan)
+  - [Filter Pushdown: Optimizer Negotiation](#filter-pushdown-optimizer-negotiation)
+  - [Write Path: INSERT INTO Flow](#write-path-insert-into-flow)
+  - [Sequence Diagram](#sequence-diagram)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+  - [Read Side](#read-side)
+  - [Write Side](#write-side)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+  - [Read Path Allocation](#read-path-allocation)
+  - [Write Path Allocation](#write-path-allocation)
+  - [Critical Resource Concern: ListingTable File Discovery](#critical-resource-concern-listingtable-file-discovery)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Insight 1: The Two-Trait Split (TableSource vs TableProvider)](#insight-1-the-two-trait-split-tablesource-vs-tableprovider)
+  - [Insight 2: Filter Pushdown Is a Negotiation, Not a Command](#insight-2-filter-pushdown-is-a-negotiation-not-a-command)
+  - [Insight 3: scan() Can Receive Filter Columns Not in the Projection](#insight-3-scan-can-receive-filter-columns-not-in-the-projection)
+  - [Insight 4: ListingTable's Partition Filter Splitting Strategy](#insight-4-listingtables-partition-filter-splitting-strategy)
+  - [Insight 5: The DataSink Write Path Is Single-Partition by Design](#insight-5-the-datasink-write-path-is-single-partition-by-design)
+  - [Insight 6: Write Operations Beyond INSERT (DELETE, UPDATE, TRUNCATE)](#insight-6-write-operations-beyond-insert-delete-update-truncate)
+  - [Insight 7: scan_with_args() Is the New API Surface](#insight-7-scan_with_args-is-the-new-api-surface)
+  - [Insight 8: TableProviderFactory for Dynamic Table Creation](#insight-8-tableproviderfactory-for-dynamic-table-creation)
+  - [Insight 9: ViewTable Compiles to a Full Physical Plan at Scan Time](#insight-9-viewtable-compiles-to-a-full-physical-plan-at-scan-time)
+  - [Insight 10: Comparison with Trino's Connector Model](#insight-10-comparison-with-trinos-connector-model)
+
+
 ## 0. Research Focus
 * **Task ID:** 4.1.A
 * **Focus:** Trace the `TableProvider` trait. How does `scan()` receive projections, filters, and limit hints? How does `supports_filters_pushdown()` negotiate predicate handling (Exact, Inexact, Unsupported)? Trace `DataSink` for write paths (`INSERT`, `CREATE TABLE AS`). Compare `TableProvider` to Trino's `ConnectorPageSource`.

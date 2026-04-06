@@ -1,5 +1,29 @@
 # Module Teardown: Stream Termination & Cancellation
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [Path 1: Natural Stream Termination](#path-1-natural-stream-termination)
+  - [Path 2: Drop-Based Cancellation](#path-2-drop-based-cancellation)
+  - [Path 3: Error Propagation](#path-3-error-propagation)
+  - [Path 4: LIMIT-Triggered Cancellation via ObservedStream](#path-4-limit-triggered-cancellation-via-observedstream)
+  - [Panic Handling in collect_partitioned](#panic-handling-in-collect_partitioned)
+  - [RAII Cleanup: Memory Release](#raii-cleanup-memory-release)
+  - [RAII Cleanup: Consumer Unregistration](#raii-cleanup-consumer-unregistration)
+  - [RAII Cleanup: Metrics Finalization](#raii-cleanup-metrics-finalization)
+  - [HashJoin Build-Side Cancellation](#hashjoin-build-side-cancellation)
+  - [ExternalSorter: Spill File + Memory Cleanup](#externalsorter-spill-file-memory-cleanup)
+  - [Spill File Cleanup via `RefCountedTempFile`](#spill-file-cleanup-via-refcountedtempfile)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Cleanup Path Comparison](#cleanup-path-comparison)
+
+
 ## 0. Research Focus
 * **Task ID:** 2.3.C
 * **Focus:** Two shutdown paths: normal completion and cancellation. For normal completion, trace the path when `poll_next()` returns `Poll::Ready(None)` — how do `MemoryReservation` drops automatically release memory back to the pool? For cancellation, trace the drop-based protocol: how does `SpawnedTask`'s abort-on-drop guarantee cleanup? How do channel closures propagate shutdown to background tasks? Contrast with Trino's explicit `CANCELING -> CANCELED` state machine and `DriverAndTaskTerminationTracker`.

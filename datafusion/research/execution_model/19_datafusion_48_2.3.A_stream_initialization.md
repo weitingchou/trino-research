@@ -1,5 +1,27 @@
 # Module Teardown: Stream Initialization
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [Sequence Diagram: Recursive Stream Initialization](#sequence-diagram-recursive-stream-initialization)
+  - [FilterExec::execute() — Full Implementation](#filterexecexecute-full-implementation)
+  - [ProjectionExec::execute() — Full Implementation](#projectionexecexecute-full-implementation)
+  - [FilterExecMetrics — Partition-Specific Metrics Setup](#filterexecmetrics-partition-specific-metrics-setup)
+  - [FilterExecStream — Stream Struct](#filterexecstream-stream-struct)
+  - [ProjectionStream — Stream Struct](#projectionstream-stream-struct)
+  - [RecordBatchStreamAdapter — Generic Stream Wrapper](#recordbatchstreamadapter-generic-stream-wrapper)
+  - [SortExec::execute() — The Accumulate-Then-Emit Pattern](#sortexecexecute-the-accumulate-then-emit-pattern)
+  - [HashJoinExec::execute() — The Dual-Input Pattern](#hashjoinexecexecute-the-dual-input-pattern)
+  - [Operator Initialization Pattern Summary](#operator-initialization-pattern-summary)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+- [6. Key Design Insights](#6-key-design-insights)
+
+
 ## 0. Research Focus
 * **Task ID:** 2.3.A
 * **Focus:** How is an operator instantiated into an active stream? Trace `FilterExec::execute()` — it returns a `FilterExecStream`. How does `RecordBatchStreamAdapter` wrap arbitrary futures into streams? Trace how the nested stream chain is constructed when `execute()` calls its child's `execute()`.

@@ -1,5 +1,22 @@
 # Module Teardown: RAII Memory Accounting
 
+## Table of Contents
+
+- [0. Research Focus](#0-research-focus)
+- [1. High-Level Overview](#1-high-level-overview)
+- [2. Structural Architecture](#2-structural-architecture)
+  - [Class Diagram](#class-diagram)
+- [3. Execution & Call Flow](#3-execution-call-flow)
+  - [Sequence Diagram: Reservation Lifecycle (Sort Operator)](#sequence-diagram-reservation-lifecycle-sort-operator)
+  - [`try_grow()` — The Gatekeeper](#try_grow-the-gatekeeper)
+  - [`Drop` — The RAII Guarantee](#drop-the-raii-guarantee)
+  - [`split()` — Zero-Pool-Interaction Transfer](#split-zero-pool-interaction-transfer)
+- [4. Concurrency & State Management](#4-concurrency-state-management)
+- [5. Memory & Resource Profile](#5-memory-resource-profile)
+- [6. Key Design Insights](#6-key-design-insights)
+  - [Comparison with Trino's Memory Model](#comparison-with-trinos-memory-model)
+
+
 ## 0. Research Focus
 * **Task ID:** 1.5
 * **Focus:** Analyze the `MemoryReservation` struct. Trace its `try_grow()` method and its `Drop` implementation. How does this Rust-native approach prevent the under-counting issues possible in Trino's GC-based `getRetainedSizeInBytes()` model?
