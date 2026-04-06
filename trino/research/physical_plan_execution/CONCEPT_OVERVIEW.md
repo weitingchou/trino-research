@@ -65,7 +65,46 @@ Complex SQL requires operations that must hold state across multiple Pages. Thes
     1. **The Build Pipeline:** Reads the planner-chosen smaller side of the join, feeding a `HashBuilderOperator` that accumulates pages into a `PagesIndex` and, on `finish()`, constructs an optimized hash table (`DefaultPagesHash` with open addressing and byte-level hash filtering, or `BigintPagesHash` for single-bigint keys). The built lookup source is handed to a `PartitionedLookupSourceFactory` which resolves a `SettableFuture` to unblock the probe side.
     2. **The Probe Pipeline:** `LookupJoinOperator` blocks until the build completes, then streams input pages through a `PageJoiner`. For each page, a `JoinProbe` eagerly batch-computes all hash lookups (vectorized before the per-row probe loop), then walks match chains with cooperative yielding. Output pages combine zero-copy probe columns (via `Block.getRegion()`) with deep-copied build columns.
 
-## 4. Resilience: The Disk Spilling Mechanism
+## 4. Expression Wire Format & Compilation Pipeline
+
+Section 3 describes how `ScanFilterAndProjectOperator` compiles expressions into JVM bytecode. But what do those expressions look like when they arrive from the coordinator? This section traces the full lifecycle: from the JSON AST on the wire to the executable `PageProcessor`.
+
+### The Wire Format: JSON AST, Not Bytecode
+
+The coordinator sends expressions as a **JSON-serialized abstract syntax tree** — a recursive tree of typed `Expression` nodes under `io.trino.sql.ir`. No bytecode, no compiled code, and no raw SQL text crosses the wire. The coordinator performs all name resolution, type inference, and function lookup before serialization, producing a "ready to compile" IR where every symbol is resolved, every type is concrete, and every function reference points to a specific implementation.
+
+The expression IR is a **sealed algebraic data type with exactly 18 node types**, using Jackson's `@JsonTypeInfo` / `@JsonSubTypes` for polymorphic serialization with a `@type` discriminator field:
+
+`Reference` | `Constant` | `Call` | `Comparison` | `Cast` | `Logical` | `Case` | `Switch` | `Between` | `In` | `IsNull` | `Coalesce` | `NullIf` | `Array` | `Row` | `Lambda` | `Bind` | `FieldReference`
+
+All 18 are Java `record` types — component names map directly to JSON field names.
+
+### Constants: Binary Blocks, Not JSON Primitives
+
+Constant values are **not** serialized as native JSON values. The `Constant` node's value is written as a single-element Trino `Block` (via `BlockEncodingSerde`), then **base64-encoded** (`MIME_NO_LINEFEEDS`). A BIGINT literal `10` becomes a base64-encoded `LongArrayBlock` with one element; a VARCHAR `'hello'` becomes an encoded `VariableWidthBlock`. This reuses the same `Block` binary infrastructure used for data shuffle pages — the constant encoding for a BIGINT is the same binary format whether it appears in an expression or in a data page.
+
+### Function Calls: Fully Resolved at the Coordinator
+
+Every `Call` node carries a `ResolvedFunction` record with complete resolution metadata: `FunctionId` (content-addressable key like `"$operator$add(bigint,bigint):bigint"`), `BoundSignature` (three-part catalog.schema.function name + concrete argument/return types), `CatalogHandle`, `functionKind` (`SCALAR`/`AGGREGATE`/`WINDOW`/`TABLE`), and behavioral flags (`deterministic`, `neverFails`, `functionNullability`). **Workers never perform function lookup** — the coordinator has already resolved every function to its specific implementation.
+
+Arithmetic operators are function calls: `col1 + col2` becomes `Call($operator$add, [col1, col2])`. Comparisons are structural nodes in the IR but lowered to function calls during compilation.
+
+### The Two-Level Expression IR
+
+The worker maintains **two expression representations**:
+
+1. **`io.trino.sql.ir.Expression`** — The wire/plan format. Column references are by name (`Reference("col1")`). Comparisons use all 7 operators. CASE is a structural node.
+
+2. **`io.trino.sql.relational.RowExpression`** — The compilation-ready format. `SqlToRowExpressionTranslator` performs critical lowerings:
+   * Column names → positional channel indices (`InputReferenceExpression`)
+   * `GREATER_THAN(a, b)` → `LESS_THAN(b, a)` (comparison normalization)
+   * `NOT_EQUAL(a, b)` → `$not(EQUAL(a, b))`
+   * Searched `CASE` → nested `IF` special forms
+   * `CAST` → coercion function call via `metadata.getCoercion()`
+
+3. **JVM Bytecode** — `PageFunctionCompiler` + `RowExpressionCompiler` generate JVM bytecode dynamically via the airlift bytecode library, with short-circuit paths for simple cases: `InputReferenceExpression` → `InputPageProjection` (no codegen), `ConstantExpression` → `ConstantPageProjection` (no codegen).
+
+## 5. Resilience: The Disk Spilling Mechanism
 
 Because Trino processes data in memory, stateful operations (like massive Hash Joins or heavy Aggregations) can hit the worker's memory limits. Trino's safety valve is **Spilling**. It requires operators to explicitly opt in by reserving memory as "revocable" rather than "user" — only revocable memory can be reclaimed.
 
@@ -84,5 +123,6 @@ Because Trino processes data in memory, stateful operations (like massive Hash J
 1.  Inside a Driver, **Operators** form a non-blocking, cooperative state machine. Many key operators are internally built as lazy `WorkProcessor` streams, adapted to the push-pull Operator interface.
 2.  Operators do not process rows; they shuttle columnar **Pages** and **Blocks** for maximum CPU efficiency. **DictionaryBlock** wrapping enables zero-copy filtering and projection caching throughout the pipeline.
 3.  **Stateless operations** (scan, filter, project) are **fused** into a single operator. A `PageProcessor` applies compiled bytecode filters and projections in adaptive batches with cooperative yield support.
-4.  **Stateful operators** accumulate state in memory. Joins use a two-pipeline build/probe architecture with vectorized hash lookups. Aggregations use specialized `GroupByHash` implementations with adaptive partial/final splitting across the network.
-5.  Operators opt into spilling by reserving **revocable memory**. A `MemoryRevokingScheduler` triggers a two-phase async protocol. Hash joins try compaction first; aggregations spill sorted groups and merge-sort on read-back.
+4.  **Expressions** arrive from the coordinator as a **JSON-serialized AST** — a sealed hierarchy of **18 node types** with fully resolved types, functions, and constants (base64-encoded Block binary). Workers translate through a two-level IR (`ir.Expression` → `RowExpression`) before JIT-compiling to JVM bytecode.
+5.  **Stateful operators** accumulate state in memory. Joins use a two-pipeline build/probe architecture with vectorized hash lookups. Aggregations use specialized `GroupByHash` implementations with adaptive partial/final splitting across the network.
+6.  Operators opt into spilling by reserving **revocable memory**. A `MemoryRevokingScheduler` triggers a two-phase async protocol. Hash joins try compaction first; aggregations spill sorted groups and merge-sort on read-back.
