@@ -13,22 +13,22 @@ This is an atomic task list for analyzing the Trino source code. **DO NOT attemp
 
 ## Phase 1: Foundation Tracing Guide (Memory Layout)
 
-### Slice
+### Task 1.1: Slice
 * **Task 1.1.A: The `Slice` Memory Interface & Metadata**
     * **Target Files:** `io.airlift.slice.Slice`, `io.airlift.slice.Slices`
     * **Focus:** Analyze the internal metadata of a `Slice` (typically a base object reference, an address offset, and a size). Trace the APIs that utilize `Unsafe` memory access. Contrast `HeapSlice` with `DirectSlice`.
 
-### Block
+### Task 1.2: Block
 * **Task 1.2.A: The `Block` Interface & Internal Metadata**
     * **Target Files:** `io.trino.spi.block.Block`, `io.trino.spi.block.VariableWidthBlock`, `io.trino.spi.block.LongArrayBlock`
     * **Focus:** Open `VariableWidthBlock` and trace its internal fields (`Slice`, `int[] offsets`, `boolean[] valueIsNull`). Analyze the read-only contract of the `Block` interface. Specifically trace the `getRegion()` method to understand how zero-copy columnar slicing is implemented without duplicating the underlying memory.
 
-### Page
+### Task 1.3: Page
 * **Task 1.3.A: The `Page` Interface & Zero-Copy Mutations**
     * **Target Files:** `io.trino.spi.Page`
     * **Focus:** Inspect the internal fields of a `Page` (`Block[]`, `positionCount`). Analyze `Page` as a passive data container. Trace how `Page.getColumns()` and `Page.prependColumn()` create new `Page` instances via shallow copies of `Block` references. 
 
-### Physical Data Mapping
+### Task 1.4: Physical Data Mapping
 * **Task 1.4.A: Physical Data Mapping (The S3 Bridge)**
     * **Target Files:** `io.trino.spi.connector.ConnectorPageSource`, `io.trino.parquet.ParquetDataSource` (or ORC equivalent), `io.trino.plugin.iceberg.IcebergPageSource`
     * **Focus:** Trace the path of an S3 read. How does the data source pull a range of bytes from the object store into a `Slice`? How does the format reader extract values to populate the `BlockBuilder` and ultimately emit a `Page`?
@@ -38,7 +38,7 @@ This is an atomic task list for analyzing the Trino source code. **DO NOT attemp
 ## Phase 2: Worker Scheduling & The Driver (Execution Model)
 **Objective:** Map the hierarchical relationship between Tasks and Drivers and trace their full lifecycles to design a compatible async/await model.
 
-### 2.1 Task Architecture & Lifecycle
+### Task 2.1: Task Architecture & Lifecycle
 * **Task 2.1.A: Task Creation & Resource Wiring**
   * **Target Files:** `io.trino.execution.SqlTask`, `io.trino.execution.SqlTaskExecution`, `io.trino.execution.TaskManagerConfig`
   * **Focus:** How is a `SqlTask` initialized when a `TaskUpdateRequest` hits the worker? What triggers its creation? Trace how it wires up the `OutputBuffer`, `QueryContext`, and `TaskStateMachine` at birth.
@@ -49,7 +49,7 @@ This is an atomic task list for analyzing the Trino source code. **DO NOT attemp
   * **Target Files:** `io.trino.execution.SqlTaskExecution`, `io.trino.operator.PipelineFactory`, `io.trino.operator.PipelineContext`
   * **Focus:** Analyze how a single `SqlTask` creates multiple `PipelineContexts`. Trace the logic that decides how many `Driver` instances to spawn for a single pipeline based on available splits and concurrency settings.
 
-### 2.2 The Scheduling Engine
+### Task 2.2: The Scheduling Engine
 * **Task 2.2.A: The Thread Pool Executor**
   * **Target Files:** `io.trino.execution.executor.TaskExecutor`
   * **Focus:** Analyze the core thread pool (Runner threads). How does it accept tasks? How does it manage the priority queue of `PrioritizedSplitRunner` objects?
@@ -57,7 +57,7 @@ This is an atomic task list for analyzing the Trino source code. **DO NOT attemp
   * **Target Files:** `io.trino.execution.executor.PrioritizedSplitRunner`, `io.trino.execution.executor.TaskHandle`
   * **Focus:** How does the executor track CPU "quanta" (time slices)? Trace how it calculates the priority of a split to ensure fair scheduling across multiple queries.
 
-### 2.3 Driver Lifecycle & The Execution Loop
+### Task 2.3: Driver Lifecycle & The Execution Loop
 * **Task 2.3.A: Driver Initialization & Pipeline Plumbing**
   * **Target Files:** `io.trino.operator.Driver`, `io.trino.operator.DriverContext`
   * **Focus:** How is a `Driver` instantiated as a sequence of `Operator` instances? Trace how the `DriverContext` is used to track memory and CPU at the driver level.
@@ -166,22 +166,22 @@ How the worker interacts with the SPI (Service Provider Interface) to get raw da
 ## Phase 5: Memory Tracking & Arbitration (Memory Management)
 **Objective:** Map out the strict hierarchical memory accounting system to understand flow control, spilling triggers, and query arbitration. This is vital for replicating safe resource management in a Rust worker.
 
-### The Global Pool and the Tracking Tree 
+### Task 5.1: The Global Pool and the Tracking Tree
 * **Task 5.1.A: The Global Pool and the Tracking Tree**
     * **Target Files:** `io.trino.memory.MemoryPool`, `io.trino.memory.QueryContext`, `io.trino.memory.context.MemoryTrackingContext`
     * **Focus:** Analyze how the single global `MemoryPool` is constructed. Trace the creation of the context tree (Query -> Task -> Pipeline -> Driver -> Operator). How do deltas (additions/subtractions of memory) propagate up this tree without causing severe lock contention?
 
-### Operator Allocation and Blocking 
+### Task 5.2: Operator Allocation and Blocking
 * **Task 5.2.A: Operator Allocation and Blocking**
     * **Target Files:** `io.trino.memory.context.LocalMemoryContext`, `io.trino.memory.context.UserMemoryContext`
     * **Focus:** Trace the exact mechanism an Operator uses to report an allocation: `LocalMemoryContext.setBytes()`. What is the exact execution path when this call results in a limit being exceeded? Trace how the resulting `ListenableFuture` is passed back to the Driver yield loop.
 
-### Revocable Memory and Spilling
+### Task 5.3: Revocable Memory and Spilling
 * **Task 5.3.A: Revocable Memory and Spilling**
     * **Target Files:** `io.trino.memory.context.RevocableMemoryContext`, `io.trino.execution.MemoryRevokingScheduler`
     * **Focus:** Look at `HashBuilderOperator` or `HashAggregationOperator`. Trace how they allocate memory via the `RevocableMemoryContext`. How does the `MemoryRevokingScheduler` monitor the global pool, select a victim task, and invoke the asynchronous revoking process?
 
-### Cluster Arbitration and the OOM Killer
+### Task 5.4: Cluster Arbitration and the OOM Killer
 * **Task 5.4.A: Cluster Arbitration and the OOM Killer**
     * **Target Files:** `io.trino.memory.ClusterMemoryManager`, `io.trino.memory.LowMemoryKiller`
     * **Focus:** This requires jumping to the Coordinator. How does the coordinator aggregate the `MemoryInfo` from all workers? Trace the logic in `ClusterMemoryManager` when a worker reports a "blocked" state. How does the `LowMemoryKiller` select a victim, and how is the "kill" signal propagated back down the Control Plane (Phase 4) to the workers?
