@@ -507,66 +507,66 @@ classDiagram
 ## Data Flow: How Modules Connect
 
 ```
-                          ┌─────────────────────────────────────────────────────────────┐
-                          │                    USER CODE                                │
-                          │  SessionContext::sql("SELECT ...")  or  DataFrame API       │
-                          └──────────┬──────────────────────────────────────────────────┘
-                                     │
-                          ┌──────────▼──────────────────────────────────────────────────┐
-                          │                  [SQL Frontend]                             │
-                          │  DFParser → Statement → SqlToRel → LogicalPlan             │
-                          └──────────┬──────────────────────────────────────────────────┘
-                                     │
-                          ┌──────────▼──────────────────────────────────────────────────┐
-                          │              [Logical Plan & Optimizer]                     │
-                          │  Analyzer (type coercion, validation)                       │
-                          │  Optimizer (30+ rules: pushdown, eliminate, simplify)       │
-                          ��  → Optimized LogicalPlan                                    │
-                          └──────────┬──────────────────────────────────────────────────┘
-                                     │
-                          ┌──────────▼──────────────────────────────────────────────────┐
-                          │              [Physical Plan Compilation]                    │
-                          │  DefaultPhysicalPlanner: LogicalPlan → ExecutionPlan tree   │
-                          │  PhysicalOptimizer: enforce distribution, sorting,          │
-                          │    insert RepartitionExec, SortExec, CoalesceBatches        │
-                          └──────────┬──────────────────────────────────────────────────┘
-                                     │ Arc<dyn ExecutionPlan>
-                          ┌──────────▼──────────────────────────────────────────────────┐
-                          │               [Execution Engine]                            │
-                          │  plan.execute(partition_idx, task_ctx)                      │
-                          │  → SendableRecordBatchStream (async Stream<RecordBatch>)    │
-                          │  Each partition = independent Tokio task                    │
-                          │  ┌──────────┐   ┌──────────┐   ┌──────────┐               │
-                          │  │ Scan     │──▶│Transform │──▶│  Sink    │               │
-                          │  │ Operator │   │ Operator │   │ Operator │               │
-                          │  └────┬─────┘   └──────────┘   └────┬─────┘               │
-                          │       │         RecordBatch          │                     │
-                          └───────┼──────────────────────────────┼─────────────────────┘
-                                  │                              │
-                    ┌─────────────▼────────┐          ┌─────────▼─────────────┐
-                    │  [Catalog & Sources]  │          │  [Data Exchange]      │
-                    │  TableProvider::scan() │          │  RepartitionExec      │
-                    │  ParquetExec           │          │  CoalescePartitions   │
-                    │  CsvExec              │          │  SortPreservingMerge  │
-                    │         │             │          │  (local only, via     │
-                    └─────────┼─────────────┘          │   Tokio mpsc channels)│
-                              │                        └───────────────────────┘
-                     ┌────────▼────────┐
-                     │  Object Store   │
-                     │  (Local/S3/GCS) │
-                     └─────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│                      USER CODE                            │
+│  SessionContext::sql("SELECT ...") or DataFrame API       │
+└────────────────────────┬──────────────────────────────────┘
+                         │
+┌────────────────────────▼──────────────────────────────────┐
+│                    [SQL Frontend]                          │
+│  DFParser -> Statement -> SqlToRel -> LogicalPlan         │
+└────────────────────────┬──────────────────────────────────┘
+                         │
+┌────────────────────────▼──────────────────────────────────┐
+│              [Logical Plan & Optimizer]                    │
+│  Analyzer (type coercion, validation)                     │
+│  Optimizer (30+ rules: pushdown, eliminate, simplify)     │
+│  -> Optimized LogicalPlan                                 │
+└────────────────────────┬──────────────────────────────────┘
+                         │
+┌────────────────────────▼──────────────────────────────────┐
+│              [Physical Plan Compilation]                   │
+│  DefaultPhysicalPlanner: LogicalPlan -> ExecutionPlan     │
+│  PhysicalOptimizer: enforce distribution, sorting,        │
+│    insert RepartitionExec, SortExec, CoalesceBatches      │
+└────────────────────────┬──────────────────────────────────┘
+                         │ Arc<dyn ExecutionPlan>
+┌────────────────────────▼──────────────────────────────────┐
+│                 [Execution Engine]                         │
+│  plan.execute(partition_idx, task_ctx)                     │
+│  -> SendableRecordBatchStream (async Stream<RecordBatch>) │
+│  Each partition = independent Tokio task                   │
+│  ┌──────────┐   ┌──────────┐   ┌──────────┐              │
+│  │   Scan   │──>│Transform │──>│   Sink   │              │
+│  │ Operator │   │ Operator │   │ Operator │              │
+│  └────┬─────┘   └──────────┘   └────┬─────┘              │
+│       │         RecordBatch          │                    │
+└───────┼──────────────────────────────┼────────────────────┘
+        │                              │
+┌───────▼──────────────┐    ┌──────────▼────────────────┐
+│ [Catalog & Sources]  │    │ [Data Exchange]            │
+│ TableProvider::scan() │    │ RepartitionExec            │
+│ ParquetExec          │    │ CoalescePartitions         │
+│ CsvExec              │    │ SortPreservingMerge        │
+│       │              │    │ (local only, via           │
+└───────┼──────────────┘    │  Tokio mpsc channels)      │
+        │                   └────────────────────────────┘
+┌───────▼──────────────┐
+│    Object Store      │
+│   (Local/S3/GCS)     │
+└──────────────────────┘
 
-  CROSS-CUTTING:
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │  [Memory Management]                                                   │
-  │  MemoryPool ← MemoryReservation (RAII per-operator)                   │
-  │  try_grow() → Ok / Err (operator decides to spill)                    │
-  │  DiskManager → SpillManager → Arrow IPC temp files                    │
-  └─────────────────────────────────────────────────────────────────────────┘
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │  [Data Model] (passive, used everywhere)                               │
-  │  Arrow Buffer → Array (Primitive | String | Dictionary) → RecordBatch │
-  └─────────────────────────────────────────────────────────────────────────┘
+CROSS-CUTTING:
+┌───────────────────────────────────────────────────────────┐
+│ [Memory Management]                                       │
+│ MemoryPool <- MemoryReservation (RAII per-operator)       │
+│ try_grow() -> Ok / Err (operator decides to spill)        │
+│ DiskManager -> SpillManager -> Arrow IPC temp files       │
+└───────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│ [Data Model] (passive, used everywhere)                   │
+│ Arrow Buffer -> Array (Primitive|String|Dict) -> RecordBatch │
+└───────────────────────────────────────────────────────────┘
 ```
 
 ### Query Lifecycle (end-to-end)
