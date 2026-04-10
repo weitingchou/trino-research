@@ -41,48 +41,48 @@ trino-rust-worker/
 +-- GOAL.md
 +-- IMPLEMENTATION_PLAN.md
 +-- crates/
-|   +-- trw-server/             HTTP server, REST endpoints (axum)
-|   +-- trw-protocol/           Trino wire format, JSON serde, plan node types
-|   +-- trw-execution/          Task lifecycle, stream orchestration, scheduling
-|   +-- trw-operators/          Operator implementations (scan, filter, join, etc.)
-|   +-- trw-memory/             MemoryPool, MemoryReservation, Arbitrator
-|   +-- trw-connectors/         Connector trait, Hive/Iceberg Parquet reader
-|   +-- trw-exchange/           Output buffers, exchange client, shuffle
-|   +-- trw-common/             Shared types, errors, config, metrics
+|   +-- server/             HTTP server, REST endpoints (axum)
+|   +-- protocol/           Trino wire format, JSON serde, plan node types
+|   +-- execution/          Task lifecycle, stream orchestration, scheduling
+|   +-- operators/          Operator implementations (scan, filter, join, etc.)
+|   +-- memory/             MemoryPool, MemoryReservation, Arbitrator
+|   +-- connectors/         Connector trait, Hive/Iceberg Parquet reader
+|   +-- exchange/           Output buffers, exchange client, shuffle
+|   +-- common/             Shared types, errors, config, metrics
 ```
 
 ### Dependency DAG
 
 ```
-trw-server
-  +-- trw-protocol
-  +-- trw-execution
-  +-- trw-exchange
+server
+  +-- protocol
+  +-- execution
+  +-- exchange
 
-trw-execution
-  +-- trw-protocol
-  +-- trw-operators
-  +-- trw-memory
-  +-- trw-common
+execution
+  +-- protocol
+  +-- operators
+  +-- memory
+  +-- common
 
-trw-operators
-  +-- trw-memory
-  +-- trw-connectors
-  +-- trw-common
+operators
+  +-- memory
+  +-- connectors
+  +-- common
   +-- arrow / datafusion-physical-expr  (external)
 
-trw-exchange
-  +-- trw-protocol
-  +-- trw-memory
-  +-- trw-common
+exchange
+  +-- protocol
+  +-- memory
+  +-- common
 
-trw-connectors
-  +-- trw-memory
-  +-- trw-common
+connectors
+  +-- memory
+  +-- common
   +-- object_store / parquet  (external)
 
-trw-memory
-  +-- trw-common
+memory
+  +-- common
 ```
 
 ### Key External Dependencies
@@ -111,7 +111,7 @@ trw-memory
 - [ ] Initialize Cargo workspace with all 8 crates (empty `lib.rs` per crate)
 - [ ] Configure CI (cargo check, clippy, fmt, test)
 - [ ] Add core dependencies (arrow, tokio, axum, serde, bytes, parquet, object_store)
-- [ ] Create a `trw-server` binary that starts an axum HTTP server on a configurable port
+- [ ] Create a `server` binary that starts an axum HTTP server on a configurable port
 - [ ] Implement `GET /v1/info` (returns static server info JSON) as smoke test
 
 **Milestone:** `cargo build` succeeds; `curl localhost:8080/v1/info` returns a JSON response.
@@ -124,7 +124,7 @@ trw-memory
 
 **Why first:** Everything downstream — operators, exchange, connectors — produces or consumes data. The data model is the foundation.
 
-#### 1A. Internal Data Model (`trw-common`)
+#### 1A. Internal Data Model (`common`)
 
 Arrow `RecordBatch` is the internal unit of computation. No custom columnar types.
 
@@ -160,7 +160,7 @@ Arrow `RecordBatch` is the internal unit of computation. No custom columnar type
 
 Build configuration: always compile with `lto = true`, `codegen-units = 1`, `-C target-cpu=native` for release. Use `#[cfg(target_feature = "avx2")]` for compile-time dispatch of explicit SIMD paths, with scalar fallbacks for portability.
 
-#### 1B. Trino Wire Format (`trw-protocol`)
+#### 1B. Trino Wire Format (`protocol`)
 
 Implement serialization/deserialization of Trino's binary page format so data can flow between Java and Rust workers.
 
@@ -235,14 +235,14 @@ Workers register via the **ANNOUNCE** protocol (default of three pluggable backe
 - [ ] Graceful shutdown: transition node state through `ACTIVE` → `DRAINING` → `DRAINED` → `SHUTTING_DOWN`
 - [ ] Configurable coordinator URI, worker bind address, environment name
 
-#### 2B. Task Lifecycle Endpoints (`trw-server`)
+#### 2B. Task Lifecycle Endpoints (`server`)
 
 - [ ] `POST /v1/task/{taskId}` — accept `TaskUpdateRequest`, delegate to `TaskManager`
 - [ ] `GET /v1/task/{taskId}/status` — long-poll with version tracking (tokio `watch` channel)
 - [ ] `DELETE /v1/task/{taskId}` — trigger abort/cancel state transition
 - [ ] `GET /v1/memory` — return `MemoryInfo` JSON snapshot
 
-#### 2C. Task State Machine (`trw-execution`)
+#### 2C. Task State Machine (`execution`)
 
 Implement the state machine from research (Trino Phase 2, Task 2.1.B):
 
@@ -291,7 +291,7 @@ Two-phase termination: intermediate states wait for all active streams to comple
 - Each plan node has typed properties (column handles, partition functions, expressions, etc.)
 - 47 plan node types in Trino 480, polymorphically tagged via `@type` discriminator
 
-#### 3A. Plan Node Type System (`trw-protocol`)
+#### 3A. Plan Node Type System (`protocol`)
 
 **Known from research (Tasks 4.1.F [KG-6], 3.3.B [KG-7]):**
 
@@ -316,14 +316,14 @@ Two-phase termination: intermediate states wait for all active streams to comple
 - [ ] Connector handle deserializer: parse `"classLoaderId:FQCN"` format for table/column/split handles
 - [ ] Property tests: capture real plan fragment JSON from Trino coordinator, assert round-trip fidelity
 
-#### 3B. Plan-to-Execution Compilation (`trw-execution`)
+#### 3B. Plan-to-Execution Compilation (`execution`)
 
 Convert the parsed plan tree into executable async stream pipelines (DataFusion-style):
 
 ```
 PlanFragment JSON
-  -> PlanNode tree (trw-protocol, Phase 3A)
-  -> Pipeline of Arc<dyn ExecutionPlan> (trw-execution, Phase 3B)
+  -> PlanNode tree (protocol, Phase 3A)
+  -> Pipeline of Arc<dyn ExecutionPlan> (execution, Phase 3B)
   -> SendableRecordBatchStream per partition (Phase 4)
 ```
 
@@ -391,7 +391,7 @@ Replace Trino's `Driver` + `TimeSharingTaskExecutor` + `MultilevelSplitQueue` wi
 | `ListenableFuture` (blocking) | `Poll::Pending` + waker | Rust's native async mechanism |
 | `OperatorContext` | `TaskContext` (DataFusion) | Carries memory pool, config, metrics |
 
-#### 4A. Task Execution Manager (`trw-execution`)
+#### 4A. Task Execution Manager (`execution`)
 
 - [ ] `TaskManager`: maps task IDs to running tasks, handles create/update/cancel
 - [ ] `TaskExecution`: owns the compiled plan, spawns Tokio tasks per partition
@@ -432,7 +432,7 @@ Replace Trino's `Driver` + `TimeSharingTaskExecutor` + `MultilevelSplitQueue` wi
 
 **Objective:** Implement the minimum operator set to run a real query: scan, filter, project, and the connector interface for reading Parquet from object storage.
 
-#### 5A. Connector Trait (`trw-connectors`)
+#### 5A. Connector Trait (`connectors`)
 
 ```rust
 #[async_trait]
@@ -477,7 +477,7 @@ Splits are wrapped in a four-level nesting: `SplitAssignment` (plan node ID + sp
 - [ ] Column projection pushdown (only read requested columns)
 - [ ] Memory-aware: register allocations against `MemoryReservation`
 
-#### 5C. Core Operators (`trw-operators`)
+#### 5C. Core Operators (`operators`)
 
 | Operator | Implementation Strategy |
 |----------|------------------------|
@@ -503,7 +503,7 @@ Splits are wrapped in a four-level nesting: `SplitAssignment` (plan node ID + sp
 - Flow control: client-side capacity gating (buffer remaining bytes)
 - Eager acknowledgment: async ACK after receiving pages to free producer memory
 
-#### 6A. Output Buffer (`trw-exchange`)
+#### 6A. Output Buffer (`exchange`)
 
 **Known from research (Tasks 4.2.F [KG-11], 4.2.G [KG-12]):**
 
@@ -545,7 +545,7 @@ Empty buffer returns HTTP 204 (no content); non-empty returns 200 with binary bo
 - [ ] `X-Trino-Internal-Bearer` JWT validation (HKDF-SHA256)
 - [ ] `X-Trino-Max-Size` request header handling (cap response body size)
 
-#### 6B. Exchange Client (`trw-exchange`)
+#### 6B. Exchange Client (`exchange`)
 
 - [ ] `ExchangeClient`: pulls pages from multiple upstream workers concurrently
 - [ ] Token-based idempotent GET requests with retry and backoff
@@ -577,7 +577,7 @@ Empty buffer returns HTTP 204 (no content); non-empty returns 200 with binary bo
 | Arbitration | Velox | `MemoryArbitrator` coordinates cross-query spill/abort |
 | Spill trigger | Velox (sync) | Synchronous on requesting thread (not async scheduler like Trino) |
 
-#### 7A. Memory Pool & Reservation (`trw-memory`)
+#### 7A. Memory Pool & Reservation (`memory`)
 
 - [ ] `MemoryPool` trait with `try_grow(bytes)` and `shrink(bytes)`
 - [ ] `GreedyMemoryPool`: first-come-first-served, deny when full
@@ -692,7 +692,7 @@ Run the Java Trino implementation to capture reference outputs, hard-code in Rus
 - [ ] **Mixed-cluster testing:** Java and Rust workers in the same cluster; verify shuffle interoperability
 - [ ] **sqllogictest adapter:** Two-engine setup — Java Trino as oracle (seed expected results via `--complete`), Rust worker as target
 
-#### 9C. Operator-Level Test Infrastructure (`trw-test-utils` crate)
+#### 9C. Operator-Level Test Infrastructure (`test-utils` crate)
 
 Port key test utilities from both engines:
 
